@@ -5,14 +5,30 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#07090d">
 <title>KyroS Control — Analytics</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
 :root{--bg:#07090d;--panel:#0d1219;--panel2:#101722;--line:#202938;--text:#f5f7fb;--muted:#7f8a9a;--violet:#7c5cff;--cyan:#40d9ff;--green:#45e49a;--red:#ff5965;--orange:#ffad4d}
 *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:Inter,sans-serif}button,select,input{font:inherit}a{color:inherit;text-decoration:none}
-.shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{position:fixed;width:230px;inset:0 auto 0 0;border-right:1px solid var(--line);background:#090d13;padding:20px 14px;display:flex;flex-direction:column;z-index:10}.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 25px;font:700 18px Space Grotesk}.brand i{font-style:normal;width:31px;height:31px;display:grid;place-items:center;border-radius:9px;background:linear-gradient(135deg,var(--violet),var(--cyan));box-shadow:0 0 30px #735aff33}.brand small{display:block;font:600 7px Inter;color:#667282;letter-spacing:.14em;margin-top:2px}.nav{display:grid;gap:4px}.nav button{border:0;background:transparent;color:#758192;text-align:left;padding:11px 12px;border-radius:9px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:10px}.nav button b{font-size:14px;width:18px;text-align:center}.nav button.active{background:#151b27;color:#fff}.nav button.active b{color:#8b74ff}.side-bottom{margin-top:auto;border-top:1px solid var(--line);padding-top:14px}.server{padding:10px 12px;background:#0d131b;border:1px solid #1f2937;border-radius:10px;font-size:9px;color:#8490a0}.server span{display:inline-block;width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 9px var(--green);margin-right:6px}.main{grid-column:2;padding:0 28px 50px;min-width:0}.topbar{height:76px;display:flex;align-items:center;border-bottom:1px solid var(--line);position:sticky;top:0;background:#07090de8;backdrop-filter:blur(16px);z-index:5}.topbar h1{font:700 17px Space Grotesk;margin:0}.topbar p{margin:3px 0 0;font-size:8px;color:#687484}.top-actions{margin-left:auto;display:flex;align-items:center;gap:8px}.range,.refresh{border:1px solid #273142;background:#0e141d;color:#aab4c2;border-radius:9px;padding:8px 10px;font-size:9px}.refresh{cursor:pointer}.livebadge{font-size:8px;color:#65e7a9;border:1px solid #24513e;background:#0c2019;padding:7px 9px;border-radius:20px}.content{max-width:1450px;margin:auto}.section-title{display:flex;align-items:end;justify-content:space-between;margin:28px 0 12px}.section-title h2{font:600 12px Space Grotesk;margin:0}.section-title span{font-size:8px;color:#667282}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}.card,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#0f151e,#0b1017);border-radius:14px}.card{padding:17px;min-height:118px;position:relative;overflow:hidden}.card:after{content:"";position:absolute;width:80px;height:80px;border-radius:50%;background:#7459ff0d;filter:blur(25px);right:-20px;top:-20px}.card label{display:block;color:#7c8797;font-size:8px;text-transform:uppercase;letter-spacing:.09em}.card strong{display:block;font:700 28px Space Grotesk;margin:12px 0 6px}.card small{font-size:8px;color:#687484}.up{color:var(--green)!important}.warn{color:var(--orange)!important}.two{display:grid;grid-template-columns:1.45fr 1fr;gap:11px}.panel{padding:18px;min-width:0}.panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.panel-head h3{font:600 11px Space Grotesk;margin:0}.panel-head span{font-size:7px;color:#687484}.chart{height:210px;position:relative;border-bottom:1px solid #27303d;background:repeating-linear-gradient(to bottom,transparent 0,transparent 51px,#17202b 52px)}.chart svg{width:100%;height:100%;overflow:visible}.legend{display:flex;gap:18px;margin-top:13px;font-size:7px;color:#748090}.legend i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px}.donut-wrap{display:grid;grid-template-columns:145px 1fr;align-items:center;gap:20px}.donut{width:140px;height:140px;border-radius:50%;background:conic-gradient(var(--violet) 0 62%,var(--cyan) 62% 79%,var(--green) 79% 91%,#ffb24d 91% 100%);position:relative}.donut:after{content:"";position:absolute;inset:24px;background:#0d131b;border-radius:50%}.donut-center{position:absolute;z-index:2;inset:0;display:grid;place-items:center;text-align:center;font:700 20px Space Grotesk}.donut-center small{display:block;font:500 6px Inter;color:#697585}.list{display:grid;gap:10px}.list-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;font-size:9px}.list-row div small{display:block;color:#667282;font-size:7px;margin-top:3px}.bar{height:4px;background:#19212c;border-radius:4px;margin-top:5px;overflow:hidden}.bar i{display:block;height:100%;width:var(--w);background:linear-gradient(90deg,var(--violet),var(--cyan));border-radius:4px}.table{width:100%;border-collapse:collapse}.table th{text-align:left;font-size:7px;color:#647080;font-weight:600;padding:0 8px 10px;border-bottom:1px solid var(--line)}.table td{font-size:8px;padding:12px 8px;border-bottom:1px solid #171f2a;color:#aab3c0}.table tr:last-child td{border:0}.state{padding:4px 7px;border-radius:10px;font-size:6px;font-weight:700}.state.live{color:#62e5a5;background:#0c2119;border:1px solid #22503c}.state.idle{color:#8490a0;background:#121923;border:1px solid #26303d}.state.rec{color:#ff7b84;background:#271216;border:1px solid #54242b}.destination{display:flex;gap:6px;flex-wrap:wrap}.destination i{font-style:normal;font-size:6px;padding:4px 6px;border:1px solid #2a3443;border-radius:5px;color:#9ba7b7}.geo{display:grid;grid-template-columns:1fr 1fr;gap:11px}.world{height:245px;position:relative;overflow:hidden;background:radial-gradient(circle at 50% 50%,#182139,#0b1017 65%);border-radius:10px}.world svg{width:100%;height:100%;opacity:.55}.pin{position:absolute;width:8px;height:8px;border:2px solid #6de8ff;border-radius:50%;box-shadow:0 0 15px #4bdfff}.activity{display:grid;gap:0}.activity-row{display:grid;grid-template-columns:13px 1fr auto;gap:10px;padding:11px 0;border-bottom:1px solid #19212b;align-items:start}.activity-row:last-child{border:0}.activity-row>i{width:7px;height:7px;border-radius:50%;background:#6f5cff;margin-top:3px}.activity-row b{font-size:8px}.activity-row p{font-size:7px;color:#687484;margin:3px 0 0}.activity-row time{font-size:7px;color:#5f6a78}.usage{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.usage div{padding:13px;border:1px solid #202a38;border-radius:10px;background:#0b1017}.usage b{display:block;font:700 17px Space Grotesk}.usage small{font-size:7px;color:#6c7888}.page{display:none}.page.active{display:block}.placeholder{min-height:420px;display:grid;place-items:center;text-align:center}.placeholder b{font:700 26px Space Grotesk}.placeholder p{color:#718091;font-size:10px;max-width:430px;line-height:1.7}.mobile-menu{display:none}
-@media(max-width:1100px){.cards{grid-template-columns:repeat(2,1fr)}.two,.geo{grid-template-columns:1fr}.usage{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:720px){.shell{display:block}.side{transform:translateX(-100%);transition:.25s}.side.open{transform:none}.main{padding:0 14px 40px}.mobile-menu{display:block;border:0;background:transparent;color:#fff;font-size:20px;margin-right:10px}.cards{grid-template-columns:1fr 1fr}.topbar{height:66px}.top-actions .range{display:none}.donut-wrap{grid-template-columns:120px 1fr}.donut{width:115px;height:115px}.table-wrap{overflow:auto}.table{min-width:650px}}
-@media(max-width:440px){.cards{grid-template-columns:1fr}.usage{grid-template-columns:1fr 1fr}.main{padding-inline:11px}.card{min-height:105px}.download{}}
+.shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{position:fixed;width:230px;inset:0 auto 0 0;border-right:1px solid var(--line);background:#090d13;padding:20px 14px;display:flex;flex-direction:column;z-index:10}.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 25px;font:700 18px Space Grotesk}.brand i{font-style:normal;width:31px;height:31px;display:grid;place-items:center;border-radius:9px;background:linear-gradient(135deg,var(--violet),var(--cyan));box-shadow:0 0 30px #735aff33}.brand small{display:block;font:600 7px Inter;color:#667282;letter-spacing:.14em;margin-top:2px}.nav{display:grid;gap:4px}.nav button{border:0;background:transparent;color:#758192;text-align:left;padding:11px 12px;border-radius:9px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:10px}.nav button b{font-size:14px;width:18px;text-align:center}.nav button.active{background:#151b27;color:#fff}.nav button.active b{color:#8b74ff}.side-bottom{margin-top:auto;border-top:1px solid var(--line);padding-top:14px}.server{padding:10px 12px;background:#0d131b;border:1px solid #1f2937;border-radius:10px;font-size:9px;color:#8490a0}.server span{display:inline-block;width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 9px var(--green);margin-right:6px}.main{grid-column:2;padding:0 28px 50px;min-width:0}.topbar{height:76px;display:flex;align-items:center;border-bottom:1px solid var(--line);position:sticky;top:0;background:#07090de8;backdrop-filter:blur(16px);z-index:5}.topbar h1{font:700 17px Space Grotesk;margin:0}.topbar p{margin:3px 0 0;font-size:8px;color:#687484}.top-actions{margin-left:auto;display:flex;align-items:center;gap:8px}.range,.refresh{border:1px solid #273142;background:#0e141d;color:#aab4c2;border-radius:9px;padding:8px 10px;font-size:9px}.refresh{cursor:pointer}.livebadge{font-size:8px;color:#65e7a9;border:1px solid #24513e;background:#0c2019;padding:7px 9px;border-radius:20px}.content{max-width:1450px;margin:auto}.section-title{display:flex;align-items:end;justify-content:space-between;margin:28px 0 12px}.section-title h2{font:600 12px Space Grotesk;margin:0}.section-title span{font-size:8px;color:#667282}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}.card,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#0f151e,#0b1017);border-radius:14px}.card{padding:17px;min-height:118px;position:relative;overflow:hidden}.card:after{content:"";position:absolute;width:80px;height:80px;border-radius:50%;background:#7459ff0d;filter:blur(25px);right:-20px;top:-20px}.card label{display:block;color:#7c8797;font-size:8px;text-transform:uppercase;letter-spacing:.09em}.card strong{display:block;font:700 28px Space Grotesk;margin:12px 0 6px}.card small{font-size:8px;color:#687484}.up{color:var(--green)!important}.warn{color:var(--orange)!important}.two{display:grid;grid-template-columns:1.45fr 1fr;gap:11px}.panel{padding:18px;min-width:0}.panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.panel-head h3{font:600 11px Space Grotesk;margin:0}.panel-head span{font-size:7px;color:#687484}.chart{height:210px;position:relative;border-bottom:1px solid #27303d;background:repeating-linear-gradient(to bottom,transparent 0,transparent 51px,#17202b 52px)}.chart svg{width:100%;height:100%;overflow:visible}.legend{display:flex;gap:18px;margin-top:13px;font-size:7px;color:#748090}.legend i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px}.donut-wrap{display:grid;grid-template-columns:145px 1fr;align-items:center;gap:20px}.donut{width:140px;height:140px;border-radius:50%;background:conic-gradient(var(--violet) 0 62%,var(--cyan) 62% 79%,var(--green) 79% 91%,#ffb24d 91% 100%);position:relative}.donut:after{content:"";position:absolute;inset:24px;background:#0d131b;border-radius:50%}.donut-center{position:absolute;z-index:2;inset:0;display:grid;place-items:center;text-align:center;font:700 20px Space Grotesk}.donut-center small{display:block;font:500 6px Inter;color:#697585}.list{display:grid;gap:10px}.list-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;font-size:9px}.list-row div small{display:block;color:#667282;font-size:7px;margin-top:3px}.bar{height:4px;background:#19212c;border-radius:4px;margin-top:5px;overflow:hidden}.bar i{display:block;height:100%;width:var(--w);background:linear-gradient(90deg,var(--violet),var(--cyan));border-radius:4px}.table{width:100%;border-collapse:collapse}.table th{text-align:left;font-size:7px;color:#647080;font-weight:600;padding:0 8px 10px;border-bottom:1px solid var(--line)}.table td{font-size:8px;padding:12px 8px;border-bottom:1px solid #171f2a;color:#aab3c0}.table tr:last-child td{border:0}.state{padding:4px 7px;border-radius:10px;font-size:6px;font-weight:700}.state.live{color:#62e5a5;background:#0c2119;border:1px solid #22503c}.state.idle{color:#8490a0;background:#121923;border:1px solid #26303d}.state.rec{color:#ff7b84;background:#271216;border:1px solid #54242b}.destination{display:flex;gap:6px;flex-wrap:wrap}.destination i{font-style:normal;font-size:6px;padding:4px 6px;border:1px solid #2a3443;border-radius:5px;color:#9ba7b7}.geo{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(260px,.65fr);gap:11px;align-items:stretch}
+.world{height:clamp(420px,52vw,650px);position:relative;overflow:hidden;background:#05080d;border-radius:12px;border:1px solid #1d2632}
+#worldMap{height:100%;width:100%;border-radius:12px;background:#05080d;touch-action:none}
+.leaflet-container{background:#05080d;font-family:Inter,sans-serif;outline:0}
+.leaflet-control-zoom{border:1px solid #273142!important;border-radius:10px!important;overflow:hidden;box-shadow:0 8px 26px #0008!important}
+.leaflet-control-zoom a{width:36px!important;height:36px!important;line-height:34px!important;background:#0d141e!important;color:#e5ebf4!important;border-color:#273142!important;font-size:20px!important}
+.leaflet-control-zoom a:hover{background:#171f2b!important}
+.leaflet-control-attribution{background:#070b11d9!important;color:#697789!important;font-size:7px!important;padding:2px 5px!important}
+.leaflet-control-attribution a{color:#9180ff!important}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#101722;color:#f5f7fb}.leaflet-popup-content-wrapper{border:1px solid #2a3544;box-shadow:0 14px 45px #0009}.map-popup b{font-size:11px}.map-popup small{color:#8d99a9;line-height:1.75}
+.map-overlay{position:absolute;left:12px;bottom:12px;z-index:500;max-width:min(360px,calc(100% - 24px));background:#080e17e8;border:1px solid #263142;border-radius:10px;padding:10px 11px;backdrop-filter:blur(10px);pointer-events:none}
+.map-overlay b{display:block;font-size:8px;margin-bottom:7px}.map-legend{display:flex;flex-wrap:wrap;gap:8px 12px;color:#8895a6;font-size:7px}.map-legend span{display:inline-flex;align-items:center;gap:5px}.map-legend i{display:inline-block;border-radius:50%;box-shadow:none}.map-note{margin-top:7px;font-size:7px;color:#667382;line-height:1.4}
+.city-label{background:transparent!important;border:0!important;box-shadow:none!important;color:#b8c2cf!important;font-size:8px!important;font-weight:600!important;text-shadow:0 1px 4px #000,0 0 8px #000}.city-label:before{display:none!important}
+.country-shape{transition:fill .15s ease,stroke .15s ease}.activity-dot{filter:none}
+.activity{display:grid;gap:0}.activity-row{display:grid;grid-template-columns:13px 1fr auto;gap:10px;padding:11px 0;border-bottom:1px solid #19212b;align-items:start}.activity-row:last-child{border:0}.activity-row>i{width:7px;height:7px;border-radius:50%;background:#6f5cff;margin-top:3px}.activity-row b{font-size:8px}.activity-row p{font-size:7px;color:#687484;margin:3px 0 0}.activity-row time{font-size:7px;color:#5f6a78}.usage{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.usage div{padding:13px;border:1px solid #202a38;border-radius:10px;background:#0b1017}.usage b{display:block;font:700 17px Space Grotesk}.usage small{font-size:7px;color:#6c7888}.page{display:none}.page.active{display:block}.placeholder{min-height:420px;display:grid;place-items:center;text-align:center}.placeholder b{font:700 26px Space Grotesk}.placeholder p{color:#718091;font-size:10px;max-width:430px;line-height:1.7}.mobile-menu{display:none}
+@media(max-width:1100px){.cards{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}.geo{grid-template-columns:1fr}.usage{grid-template-columns:repeat(2,1fr)}.world{height:clamp(430px,62vw,620px)}}
+@media(max-width:720px){.shell{display:block}.side{width:min(84vw,270px);transform:translateX(-105%);transition:.25s;box-shadow:18px 0 45px #0009}.side.open{transform:none}.main{padding:0 12px 34px}.mobile-menu{display:block;border:0;background:transparent;color:#fff;font-size:20px;margin-right:8px;min-width:42px;min-height:42px}.cards{grid-template-columns:1fr 1fr}.topbar{height:auto;min-height:66px;padding:8px 0;gap:4px}.topbar h1{font-size:15px}.topbar p{font-size:7px}.top-actions{gap:5px}.top-actions .range{display:none}.refresh{padding:8px;font-size:0}.refresh::first-letter{font-size:14px}.livebadge{font-size:7px;padding:6px 7px}.section-title{margin-top:20px}.panel{padding:13px}.donut-wrap{grid-template-columns:110px 1fr}.donut{width:105px;height:105px}.table-wrap{overflow:auto;-webkit-overflow-scrolling:touch}.table{min-width:650px}.world{height:440px;border-radius:10px}.leaflet-control-zoom a{width:42px!important;height:42px!important;line-height:40px!important}.map-overlay{left:8px;right:8px;bottom:8px;max-width:none;padding:8px 9px}.map-legend{gap:6px 9px}.geo>.panel:first-child{padding:8px}.geo>.panel:first-child .panel-head{padding:4px 4px 0;margin-bottom:10px}.geo>.panel:first-child .panel-head span{max-width:48%;text-align:right;line-height:1.4}}
+@media(max-width:440px){.cards{grid-template-columns:1fr}.usage{grid-template-columns:1fr 1fr}.main{padding-inline:9px}.card{min-height:102px}.card strong{font-size:24px}.world{height:400px}.geo>.panel:first-child{padding:6px}.map-overlay b{font-size:7px}.map-legend{font-size:6.5px}.map-note{font-size:6.5px}.section-title span{max-width:54%;text-align:right}.top-actions .livebadge{display:none}}
+@media(max-width:360px){.usage{grid-template-columns:1fr}.world{height:370px}.map-overlay{display:none}}
 </style>
 </head>
 <body>
@@ -70,10 +86,7 @@
 
   <div class="section-title"><h2>Audience footprint</h2><span>Network country + app language</span></div>
   <div class="geo">
-    <div class="panel"><div class="panel-head"><h3>Top network countries</h3><span>VPN MAY AFFECT COUNTRY</span></div><div class="world">
-      <svg viewBox="0 0 800 350"><path d="M82 95l75-44 88 15 32 50-48 40-70-8-28 58-45-28zm235-13 72-42 98 21 40 47-22 61-58 23-28 92-55-20-17-82-47-40zm249 24 66-27 84 30 23 59-51 28-45-19-34 48-56-21-12-54z" fill="#263247"/></svg>
-      <i class="pin" style="left:55%;top:60%"></i><i class="pin" style="left:49%;top:45%"></i><i class="pin" style="left:22%;top:40%"></i><i class="pin" style="left:72%;top:49%"></i>
-    </div></div>
+    <div class="panel"><div class="panel-head"><h3>Top network countries</h3><span>REAL WORLD MAP · VPN MAY AFFECT COUNTRY</span></div><div class="world"><div id="worldMap" aria-label="KyroS global installations map"></div><div class="map-overlay"><b>Connections by population bracket</b><div class="map-legend" id="mapLegend"></div><div class="map-note">All map dots use the same compact size. Higher connection populations are shown only by stronger color intensity.</div></div></div></div>
     <div class="panel"><div class="panel-head"><h3>Top countries</h3><span>INSTALLATIONS</span></div><div class="list">
       <div class="list-row"><div>Kenya<small>8,412 installations</small><div class="bar"><i style="--w:82%"></i></div></div><b>17.3%</b></div>
       <div class="list-row"><div>United States<small>7,305 installations</small><div class="bar"><i style="--w:71%"></i></div></div><b>15.0%</b></div>
@@ -109,10 +122,97 @@
 </div>
 </div>
 </div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 <script>
+const previewActivity=[
+  {country:"Kenya",city:"Nairobi",lat:-1.2864,lng:36.8172,count:8412,active:327,broadcasts:94},
+  {country:"Kenya",city:"Mombasa",lat:-4.0435,lng:39.6682,count:1380,active:63,broadcasts:19},
+  {country:"United States",city:"New York",lat:40.7128,lng:-74.0060,count:7305,active:244,broadcasts:81},
+  {country:"United States",city:"Los Angeles",lat:34.0522,lng:-118.2437,count:2850,active:97,broadcasts:33},
+  {country:"United Kingdom",city:"London",lat:51.5072,lng:-0.1276,count:4116,active:139,broadcasts:42},
+  {country:"France",city:"Paris",lat:48.8566,lng:2.3522,count:3282,active:108,broadcasts:31},
+  {country:"Spain",city:"Madrid",lat:40.4168,lng:-3.7038,count:2704,active:87,broadcasts:24},
+  {country:"Nigeria",city:"Lagos",lat:6.5244,lng:3.3792,count:2381,active:92,broadcasts:22},
+  {country:"India",city:"Mumbai",lat:19.0760,lng:72.8777,count:2014,active:76,broadcasts:18},
+  {country:"Brazil",city:"São Paulo",lat:-23.5505,lng:-46.6333,count:1982,active:69,broadcasts:17},
+  {country:"Indonesia",city:"Jakarta",lat:-6.2088,lng:106.8456,count:1604,active:58,broadcasts:14},
+  {country:"Australia",city:"Sydney",lat:-33.8688,lng:151.2093,count:980,active:31,broadcasts:8},
+  {country:"Japan",city:"Tokyo",lat:35.6762,lng:139.6503,count:720,active:25,broadcasts:7}
+];
+
+function activityStyle(count){
+  // All map markers stay at the smallest compact size.
+  // Population is communicated only by color intensity.
+  const radius=3;
+  if(count<=10) return {radius,color:"#353951",label:"1–10"};
+  if(count<=50) return {radius,color:"#444a70",label:"11–50"};
+  if(count<=250) return {radius,color:"#555e96",label:"51–250"};
+  if(count<=1000) return {radius,color:"#6672bd",label:"251–1K"};
+  if(count<=5000) return {radius,color:"#787fe0",label:"1K–5K"};
+  if(count<=20000) return {radius,color:"#8f86f4",label:"5K–20K"};
+  return {radius,color:"#ad79ff",label:"20K+"};
+}
+const worldMap=L.map("worldMap",{
+  worldCopyJump:true,minZoom:1,maxZoom:8,zoomControl:true,attributionControl:false,
+  touchZoom:true,scrollWheelZoom:true,doubleClickZoom:true,boxZoom:true,keyboard:true,dragging:true,
+  zoomSnap:0.25,zoomDelta:0.5,maxBounds:[[-88,-190],[88,190]],maxBoundsViscosity:.8
+}).setView([18,10],1.45);
+
+// No street tiles: the ocean is simply the map background and countries are vector polygons.
+const countriesUrl="https://cdn.jsdelivr.net/gh/johan/world.geo.json@master/countries.geo.json";
+fetch(countriesUrl)
+  .then(r=>{if(!r.ok) throw new Error("Country map unavailable");return r.json();})
+  .then(geo=>{
+    L.geoJSON(geo,{
+      style:{fillColor:"#141d28",fillOpacity:1,color:"#3b4b5f",weight:.7,opacity:.9,className:"country-shape"},
+      onEachFeature:(feature,layer)=>{
+        const n=(feature.properties&&feature.properties.name)||"Country";
+        layer.bindTooltip(n,{sticky:true,direction:"top",opacity:.9});
+        layer.on({mouseover:e=>e.target.setStyle({fillColor:"#1b2734",color:"#53677f",weight:1}),mouseout:e=>e.target.setStyle({fillColor:"#141d28",color:"#3b4b5f",weight:.7})});
+      }
+    }).addTo(worldMap).bringToBack();
+  })
+  .catch(()=>{
+    // Keep the map usable even if the boundary file cannot load.
+    document.getElementById("worldMap").style.background="#05080d";
+  });
+
+const legendBrackets=[5,30,150,700,3000,10000,50000];
+document.getElementById("mapLegend").innerHTML=legendBrackets.map(v=>{
+  const s=activityStyle(v),d=6;
+  return `<span><i style="width:${d}px;height:${d}px;background:${s.color};color:${s.color}"></i>${s.label}</span>`;
+}).join("");
+
+const cityLabels=[];
+previewActivity.forEach(c=>{
+  const s=activityStyle(c.count);
+  const marker=L.circleMarker([c.lat,c.lng],{
+    radius:s.radius,
+    stroke:false,
+    weight:0,
+    fillColor:s.color,
+    fillOpacity:0.96,
+    className:"activity-dot"
+  }).addTo(worldMap);
+  marker.bindPopup(`<div class="map-popup"><b>${c.city}, ${c.country}</b><br><small>${c.count.toLocaleString()} connections/installations<br>${c.active.toLocaleString()} active now<br>${c.broadcasts.toLocaleString()} broadcasts<br>Population bracket: ${s.label}</small></div>`);
+  marker.bindTooltip(c.city,{permanent:false,direction:"right",offset:[8,0],className:"city-label"});
+  cityLabels.push(marker);
+});
+
+function updateCityLabels(){
+  const show=worldMap.getZoom()>=3.25;
+  cityLabels.forEach(m=>{
+    if(show&&!m.isTooltipOpen()) m.openTooltip();
+    if(!show&&m.isTooltipOpen()) m.closeTooltip();
+  });
+}
+worldMap.on("zoomend",updateCityLabels);
+updateCityLabels();
+setTimeout(()=>worldMap.invalidateSize(),180);
 const buttons=[...document.querySelectorAll(".nav button")], pages=[...document.querySelectorAll(".page")], title=document.getElementById("pageTitle"), side=document.getElementById("side");
-buttons.forEach(b=>b.onclick=()=>{buttons.forEach(x=>x.classList.remove("active"));b.classList.add("active");pages.forEach(p=>p.classList.toggle("active",p.id===b.dataset.page));title.textContent=b.textContent.trim().replace(/^[⌂◫●≋⌁↓]\s*/,"");side.classList.remove("open");window.scrollTo({top:0,behavior:"smooth"})});
+buttons.forEach(b=>b.onclick=()=>{buttons.forEach(x=>x.classList.remove("active"));b.classList.add("active");pages.forEach(p=>p.classList.toggle("active",p.id===b.dataset.page));title.textContent=b.textContent.trim().replace(/^[⌂◫●≋⌁↓]\s*/,"");side.classList.remove("open");window.scrollTo({top:0,behavior:"smooth"});if(b.dataset.page==="overview")setTimeout(()=>worldMap.invalidateSize(),120)});
 document.getElementById("menu").onclick=()=>side.classList.toggle("open");
 document.getElementById("refresh").onclick=e=>{const b=e.currentTarget,old=b.textContent;b.textContent="↻ Refreshed";setTimeout(()=>b.textContent=old,900)};
+window.addEventListener("resize",()=>worldMap.invalidateSize());
 </script>
 </body></html>
