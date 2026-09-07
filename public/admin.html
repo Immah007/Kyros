@@ -29,6 +29,15 @@
 @media(max-width:720px){.shell{display:block}.side{width:min(84vw,270px);transform:translateX(-105%);transition:.25s;box-shadow:18px 0 45px #0009}.side.open{transform:none}.main{padding:0 12px 34px}.mobile-menu{display:block;border:0;background:transparent;color:#fff;font-size:20px;margin-right:8px;min-width:42px;min-height:42px}.cards{grid-template-columns:1fr 1fr}.topbar{height:auto;min-height:66px;padding:8px 0;gap:4px}.topbar h1{font-size:15px}.topbar p{font-size:7px}.top-actions{gap:5px}.top-actions .range{display:none}.refresh{padding:8px;font-size:0}.refresh::first-letter{font-size:14px}.livebadge{font-size:7px;padding:6px 7px}.section-title{margin-top:20px}.panel{padding:13px}.donut-wrap{grid-template-columns:110px 1fr}.donut{width:105px;height:105px}.table-wrap{overflow:auto;-webkit-overflow-scrolling:touch}.table{min-width:650px}.world{height:440px;border-radius:10px}.leaflet-control-zoom a{width:42px!important;height:42px!important;line-height:40px!important}.map-overlay{left:8px;right:8px;bottom:8px;max-width:none;padding:8px 9px}.map-legend{gap:6px 9px}.geo>.panel:first-child{padding:8px}.geo>.panel:first-child .panel-head{padding:4px 4px 0;margin-bottom:10px}.geo>.panel:first-child .panel-head span{max-width:48%;text-align:right;line-height:1.4}}
 @media(max-width:440px){.cards{grid-template-columns:1fr}.usage{grid-template-columns:1fr 1fr}.main{padding-inline:9px}.card{min-height:102px}.card strong{font-size:24px}.world{height:400px}.geo>.panel:first-child{padding:6px}.map-overlay b{font-size:7px}.map-legend{font-size:6.5px}.map-note{font-size:6.5px}.section-title span{max-width:54%;text-align:right}.top-actions .livebadge{display:none}}
 @media(max-width:360px){.usage{grid-template-columns:1fr}.world{height:370px}.map-overlay{display:none}}
+
+/* Issue reporting admin */
+.nav-count{margin-left:auto;min-width:19px;height:19px;padding:0 6px;border-radius:10px;display:inline-grid;place-items:center;background:#24171c;border:1px solid #53303a;color:#ff9da5;font-size:8px;font-weight:800}
+.issue-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.issue-toolbar input,.issue-toolbar select{height:38px;border:1px solid #273142;background:#0b1119;color:#e6ebf2;border-radius:9px;padding:0 10px;font-size:9px;outline:none}.issue-toolbar input{flex:1;min-width:190px}.issue-toolbar button{height:38px;border:1px solid #273142;background:#121923;color:#cdd6e2;border-radius:9px;padding:0 12px;font-size:9px;cursor:pointer}.issue-toolbar button:hover{background:#18212d}
+.issue-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}.issue-summary .mini{border:1px solid var(--line);background:#0d1219;border-radius:12px;padding:14px}.issue-summary label{display:block;color:#758192;font-size:7px;text-transform:uppercase;letter-spacing:.08em}.issue-summary strong{display:block;font:700 22px Space Grotesk;margin-top:7px}.issue-summary .open-count{color:#ff9b65}.issue-summary .done-count{color:#67dea4}
+.issue-list{display:grid;gap:9px}.issue-item{border:1px solid #202938;background:#0b1017;border-radius:12px;overflow:hidden}.issue-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 13px;cursor:pointer}.issue-status-dot{width:7px;height:7px;border-radius:50%;background:#ff9b65}.issue-item.addressed .issue-status-dot{background:#45e49a}.issue-title{min-width:0}.issue-title b{display:block;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.issue-title small{display:block;color:#687484;font-size:7px;margin-top:3px}.issue-state{font-size:7px;font-weight:800;padding:5px 8px;border-radius:12px;border:1px solid #5a3a29;color:#ffb076;background:#20150f}.issue-item.addressed .issue-state{border-color:#27533f;color:#6ae5a9;background:#0d2018}.issue-body{display:none;border-top:1px solid #1a222d;padding:13px}.issue-item.expanded .issue-body{display:block}.issue-description{white-space:pre-wrap;font-size:9px;line-height:1.65;color:#c4ccd6;background:#090e14;border:1px solid #1c2531;border-radius:9px;padding:12px}.issue-meta{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.issue-meta span{font-size:7px;color:#8793a3;padding:5px 7px;border:1px solid #25303e;border-radius:6px;background:#101620}.issue-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:10px}.issue-actions button{border:1px solid #2b3747;background:#121923;color:#d7dfea;border-radius:8px;padding:8px 10px;font-size:8px;cursor:pointer}.issue-actions button.primary{border-color:#2c6049;background:#10251c;color:#71e6ac}.issue-actions button.reopen{border-color:#60412c;background:#24180f;color:#ffb77f}.issues-empty{padding:38px 20px;text-align:center;color:#718091;font-size:9px}.issues-error{padding:12px;border:1px solid #5c2d34;background:#211216;color:#ff8f99;border-radius:9px;font-size:9px;margin-bottom:10px}.issue-loading{padding:30px;text-align:center;color:#718091;font-size:9px}
+@media(max-width:720px){.issue-summary{grid-template-columns:1fr 1fr 1fr}.issue-toolbar{align-items:stretch}.issue-toolbar input{min-width:100%;width:100%;font-size:16px}.issue-toolbar select{flex:1;min-width:0;font-size:16px}.issue-toolbar button{min-width:90px}.issue-head{grid-template-columns:auto minmax(0,1fr);}.issue-state{grid-column:2;justify-self:start}.issue-actions{justify-content:stretch}.issue-actions button{flex:1;min-height:42px}.issue-description{font-size:10px}}
+@media(max-width:440px){.issue-summary{grid-template-columns:1fr}.issue-summary .mini{padding:12px}.issue-summary strong{font-size:19px}}
+
 </style>
 </head>
 <body>
@@ -41,6 +50,7 @@
     <button data-page="broadcasts"><b>●</b>Broadcasts</button>
     <button data-page="usage"><b>≋</b>Feature Usage</button>
     <button data-page="network"><b>⌁</b>Network</button>
+    <button data-page="issues"><b>!</b>Issues <span class="nav-count" id="issuesNavCount">0</span></button>
     <button data-page="releases"><b>↓</b>Releases</button>
   </div>
   <div class="side-bottom"><div class="server"><span></span>KyroS Mother Server<br><small>Preview · PostgreSQL ready</small></div></div>
@@ -118,11 +128,129 @@
 
 <section class="page" id="network"><div class="section-title"><h2>Network health</h2><span>Aggregate, privacy-conscious telemetry</span></div><div class="cards"><div class="card"><label>Excellent / Good</label><strong>81%</strong><small class="up">Healthy sessions</small></div><div class="card"><label>Reconnects</label><strong>1.7%</strong><small>Broadcast sessions</small></div><div class="card"><label>Wi-Fi</label><strong>68%</strong><small>Active transport</small></div><div class="card"><label>Cellular</label><strong>24%</strong><small>Active transport</small></div></div><div class="section-title"><h2>Health distribution</h2></div><div class="panel"><div class="list"><div class="list-row"><div>Excellent<div class="bar"><i style="--w:72%"></i></div></div><b>42%</b></div><div class="list-row"><div>Good<div class="bar"><i style="--w:66%"></i></div></div><b>39%</b></div><div class="list-row"><div>Fair<div class="bar"><i style="--w:24%"></i></div></div><b>14%</b></div><div class="list-row"><div>Poor / Critical<div class="bar"><i style="--w:9%"></i></div></div><b>5%</b></div></div></div></section>
 
+
+<section class="page" id="issues">
+  <div class="section-title"><h2>Reported issues</h2><span>Bug / issue reports received from KyroS apps</span></div>
+  <div class="issue-summary">
+    <div class="mini"><label>Total reports</label><strong id="issueTotal">0</strong></div>
+    <div class="mini"><label>Needs attention</label><strong class="open-count" id="issueOpen">0</strong></div>
+    <div class="mini"><label>Addressed</label><strong class="done-count" id="issueAddressed">0</strong></div>
+  </div>
+  <div class="panel">
+    <div class="issue-toolbar">
+      <input id="issueSearch" type="search" placeholder="Search title, description, email or device">
+      <select id="issueStatus" aria-label="Issue status">
+        <option value="open">Needs attention</option>
+        <option value="all">All reports</option>
+        <option value="addressed">Addressed</option>
+      </select>
+      <button id="issuesRefresh" type="button">↻ Refresh</button>
+    </div>
+    <div id="issuesError"></div>
+    <div class="issue-list" id="issueList"><div class="issue-loading">Loading issue reports…</div></div>
+  </div>
+</section>
+
 <section class="page" id="releases"><div class="section-title"><h2>Release distribution</h2><span>Preview management surface</span></div><div class="cards"><div class="card"><label>Android</label><strong>1.0.0</strong><small class="up">AVAILABLE</small></div><div class="card"><label>iOS</label><strong>1.0.0</strong><small>Release package</small></div><div class="card"><label>Windows</label><strong>1.0.0</strong><small>Release package</small></div><div class="card"><label>Latest adoption</label><strong>84%</strong><small>All active installs</small></div></div><div class="section-title"><h2>Release controls</h2></div><div class="panel placeholder"><div><b>Release management</b><p>This surface is ready for future mother-server controls: current/minimum build, forced updates, release notes, announcements and package publishing. It is intentionally UI-only for now.</p></div></div></section>
 </div>
 </div>
 </div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="">
+
+// ============================================================
+// Issue reports admin
+// ============================================================
+const issueList=document.getElementById("issueList");
+const issueStatus=document.getElementById("issueStatus");
+const issueSearch=document.getElementById("issueSearch");
+const issueError=document.getElementById("issuesError");
+const issuesNavCount=document.getElementById("issuesNavCount");
+let issueSearchTimer=null;
+
+function esc(v){return String(v??"").replace(/[&<>'"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));}
+function issueDate(v){if(!v)return "Unknown time";const d=new Date(v);return Number.isNaN(d.getTime())?"Unknown time":d.toLocaleString();}
+function shortId(v){if(!v)return "—";const s=String(v);return s.length>14?`${s.slice(0,8)}…${s.slice(-4)}`:s;}
+
+function renderIssues(data){
+  const counts=data.counts||{};
+  document.getElementById("issueTotal").textContent=Number(counts.total||0).toLocaleString();
+  document.getElementById("issueOpen").textContent=Number(counts.open||0).toLocaleString();
+  document.getElementById("issueAddressed").textContent=Number(counts.addressed||0).toLocaleString();
+  issuesNavCount.textContent=Number(counts.open||0)>99?"99+":String(counts.open||0);
+  issuesNavCount.style.display=Number(counts.open||0)>0?"inline-grid":"none";
+
+  const rows=Array.isArray(data.issues)?data.issues:[];
+  if(!rows.length){issueList.innerHTML='<div class="issues-empty">No issue reports match this view.</div>';return;}
+  issueList.innerHTML=rows.map(r=>{
+    const addressed=!!r.addressed;
+    const meta=[
+      r.platform&&`Platform: ${esc(r.platform)}`,
+      r.device_model&&`Device: ${esc(r.device_model)}`,
+      r.app_version&&`Version: ${esc(r.app_version)}${r.app_build?` (${esc(r.app_build)})`:""}`,
+      r.last_network_country&&`Country: ${esc(r.last_network_country)}`,
+      r.email&&`Email: ${esc(r.email)}`,
+      r.installation_id&&`Install: ${esc(shortId(r.installation_id))}`
+    ].filter(Boolean).map(x=>`<span>${x}</span>`).join("");
+    const shots=Array.isArray(r.screenshots)&&r.screenshots.length?`<span>${r.screenshots.length} screenshot reference${r.screenshots.length===1?"":"s"}</span>`:"";
+    return `<article class="issue-item ${addressed?"addressed":""}" data-issue-id="${esc(r.issue_id)}">
+      <div class="issue-head" tabindex="0" role="button" aria-expanded="false">
+        <i class="issue-status-dot"></i>
+        <div class="issue-title"><b>${esc(r.title)}</b><small>${issueDate(r.created_at)} · ${esc(shortId(r.issue_id))}</small></div>
+        <span class="issue-state">${addressed?"ADDRESSED":"NEEDS ATTENTION"}</span>
+      </div>
+      <div class="issue-body">
+        <div class="issue-description">${esc(r.description)}</div>
+        <div class="issue-meta">${meta}${shots}</div>
+        ${addressed&&r.addressed_at?`<div class="issue-meta"><span>Addressed: ${issueDate(r.addressed_at)}</span></div>`:""}
+        <div class="issue-actions"><button class="${addressed?"reopen":"primary"}" type="button" data-action="toggle">${addressed?"Mark not addressed":"Mark addressed"}</button></div>
+      </div>
+    </article>`;
+  }).join("");
+
+  issueList.querySelectorAll(".issue-head").forEach(head=>{
+    const toggle=()=>{const item=head.closest(".issue-item");const expanded=item.classList.toggle("expanded");head.setAttribute("aria-expanded",String(expanded));};
+    head.addEventListener("click",toggle);
+    head.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}});
+  });
+  issueList.querySelectorAll('[data-action="toggle"]').forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const item=btn.closest(".issue-item");
+    const id=item.dataset.issueId;
+    const next=!item.classList.contains("addressed");
+    btn.disabled=true;btn.textContent="Saving…";
+    try{
+      const r=await fetch(`/admin-issues/${encodeURIComponent(id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({addressed:next})});
+      const body=await r.json().catch(()=>({}));
+      if(!r.ok||!body.ok)throw new Error(body.error||"Unable to update issue");
+      await loadIssues();
+    }catch(err){issueError.innerHTML=`<div class="issues-error">${esc(err.message||"Unable to update issue")}</div>`;btn.disabled=false;btn.textContent=next?"Mark addressed":"Mark not addressed";}
+  }));
+}
+
+async function loadIssues(){
+  if(!issueList)return;
+  issueError.innerHTML="";
+  issueList.innerHTML='<div class="issue-loading">Loading issue reports…</div>';
+  const params=new URLSearchParams({status:issueStatus.value,limit:"150"});
+  const q=issueSearch.value.trim();if(q)params.set("q",q);
+  try{
+    const r=await fetch(`/admin-issues?${params.toString()}`,{headers:{"Accept":"application/json"}});
+    const body=await r.json().catch(()=>({}));
+    if(!r.ok||!body.ok)throw new Error(body.error||"Unable to load issue reports");
+    renderIssues(body);
+  }catch(err){issueList.innerHTML='<div class="issues-empty">Issue reports could not be loaded.</div>';issueError.innerHTML=`<div class="issues-error">${esc(err.message||"Unable to load issue reports")}</div>`;}
+}
+issueStatus.addEventListener("change",loadIssues);
+document.getElementById("issuesRefresh").addEventListener("click",loadIssues);
+issueSearch.addEventListener("input",()=>{clearTimeout(issueSearchTimer);issueSearchTimer=setTimeout(loadIssues,300);});
+
+// Load the unresolved badge quietly at startup.
+fetch("/admin-issues?status=open&limit=1").then(r=>r.json()).then(data=>{if(data&&data.ok){const c=Number(data.counts?.open||0);issuesNavCount.textContent=c>99?"99+":String(c);issuesNavCount.style.display=c>0?"inline-grid":"none";}}).catch(()=>{});
+
+// When the Issues navigation page opens, pull fresh reports immediately.
+buttons.forEach(b=>{if(b.dataset.page==="issues")b.addEventListener("click",()=>setTimeout(loadIssues,0));});
+
+</script>
 <script>
 const previewActivity=[
   {country:"Kenya",city:"Nairobi",lat:-1.2864,lng:36.8172,count:8412,active:327,broadcasts:94},
@@ -210,9 +338,104 @@ worldMap.on("zoomend",updateCityLabels);
 updateCityLabels();
 setTimeout(()=>worldMap.invalidateSize(),180);
 const buttons=[...document.querySelectorAll(".nav button")], pages=[...document.querySelectorAll(".page")], title=document.getElementById("pageTitle"), side=document.getElementById("side");
-buttons.forEach(b=>b.onclick=()=>{buttons.forEach(x=>x.classList.remove("active"));b.classList.add("active");pages.forEach(p=>p.classList.toggle("active",p.id===b.dataset.page));title.textContent=b.textContent.trim().replace(/^[⌂◫●≋⌁↓]\s*/,"");side.classList.remove("open");window.scrollTo({top:0,behavior:"smooth"});if(b.dataset.page==="overview")setTimeout(()=>worldMap.invalidateSize(),120)});
+buttons.forEach(b=>b.onclick=()=>{buttons.forEach(x=>x.classList.remove("active"));b.classList.add("active");pages.forEach(p=>p.classList.toggle("active",p.id===b.dataset.page));title.textContent=b.textContent.trim().replace(/^[⌂◫●≋⌁↓!]\s*/,"");side.classList.remove("open");window.scrollTo({top:0,behavior:"smooth"});if(b.dataset.page==="overview")setTimeout(()=>worldMap.invalidateSize(),120)});
 document.getElementById("menu").onclick=()=>side.classList.toggle("open");
 document.getElementById("refresh").onclick=e=>{const b=e.currentTarget,old=b.textContent;b.textContent="↻ Refreshed";setTimeout(()=>b.textContent=old,900)};
 window.addEventListener("resize",()=>worldMap.invalidateSize());
+
+
+// ============================================================
+// Issue reports admin
+// ============================================================
+const issueList=document.getElementById("issueList");
+const issueStatus=document.getElementById("issueStatus");
+const issueSearch=document.getElementById("issueSearch");
+const issueError=document.getElementById("issuesError");
+const issuesNavCount=document.getElementById("issuesNavCount");
+let issueSearchTimer=null;
+
+function esc(v){return String(v??"").replace(/[&<>'"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));}
+function issueDate(v){if(!v)return "Unknown time";const d=new Date(v);return Number.isNaN(d.getTime())?"Unknown time":d.toLocaleString();}
+function shortId(v){if(!v)return "—";const s=String(v);return s.length>14?`${s.slice(0,8)}…${s.slice(-4)}`:s;}
+
+function renderIssues(data){
+  const counts=data.counts||{};
+  document.getElementById("issueTotal").textContent=Number(counts.total||0).toLocaleString();
+  document.getElementById("issueOpen").textContent=Number(counts.open||0).toLocaleString();
+  document.getElementById("issueAddressed").textContent=Number(counts.addressed||0).toLocaleString();
+  issuesNavCount.textContent=Number(counts.open||0)>99?"99+":String(counts.open||0);
+  issuesNavCount.style.display=Number(counts.open||0)>0?"inline-grid":"none";
+
+  const rows=Array.isArray(data.issues)?data.issues:[];
+  if(!rows.length){issueList.innerHTML='<div class="issues-empty">No issue reports match this view.</div>';return;}
+  issueList.innerHTML=rows.map(r=>{
+    const addressed=!!r.addressed;
+    const meta=[
+      r.platform&&`Platform: ${esc(r.platform)}`,
+      r.device_model&&`Device: ${esc(r.device_model)}`,
+      r.app_version&&`Version: ${esc(r.app_version)}${r.app_build?` (${esc(r.app_build)})`:""}`,
+      r.last_network_country&&`Country: ${esc(r.last_network_country)}`,
+      r.email&&`Email: ${esc(r.email)}`,
+      r.installation_id&&`Install: ${esc(shortId(r.installation_id))}`
+    ].filter(Boolean).map(x=>`<span>${x}</span>`).join("");
+    const shots=Array.isArray(r.screenshots)&&r.screenshots.length?`<span>${r.screenshots.length} screenshot reference${r.screenshots.length===1?"":"s"}</span>`:"";
+    return `<article class="issue-item ${addressed?"addressed":""}" data-issue-id="${esc(r.issue_id)}">
+      <div class="issue-head" tabindex="0" role="button" aria-expanded="false">
+        <i class="issue-status-dot"></i>
+        <div class="issue-title"><b>${esc(r.title)}</b><small>${issueDate(r.created_at)} · ${esc(shortId(r.issue_id))}</small></div>
+        <span class="issue-state">${addressed?"ADDRESSED":"NEEDS ATTENTION"}</span>
+      </div>
+      <div class="issue-body">
+        <div class="issue-description">${esc(r.description)}</div>
+        <div class="issue-meta">${meta}${shots}</div>
+        ${addressed&&r.addressed_at?`<div class="issue-meta"><span>Addressed: ${issueDate(r.addressed_at)}</span></div>`:""}
+        <div class="issue-actions"><button class="${addressed?"reopen":"primary"}" type="button" data-action="toggle">${addressed?"Mark not addressed":"Mark addressed"}</button></div>
+      </div>
+    </article>`;
+  }).join("");
+
+  issueList.querySelectorAll(".issue-head").forEach(head=>{
+    const toggle=()=>{const item=head.closest(".issue-item");const expanded=item.classList.toggle("expanded");head.setAttribute("aria-expanded",String(expanded));};
+    head.addEventListener("click",toggle);
+    head.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}});
+  });
+  issueList.querySelectorAll('[data-action="toggle"]').forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation();
+    const item=btn.closest(".issue-item");
+    const id=item.dataset.issueId;
+    const next=!item.classList.contains("addressed");
+    btn.disabled=true;btn.textContent="Saving…";
+    try{
+      const r=await fetch(`/admin-issues/${encodeURIComponent(id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({addressed:next})});
+      const body=await r.json().catch(()=>({}));
+      if(!r.ok||!body.ok)throw new Error(body.error||"Unable to update issue");
+      await loadIssues();
+    }catch(err){issueError.innerHTML=`<div class="issues-error">${esc(err.message||"Unable to update issue")}</div>`;btn.disabled=false;btn.textContent=next?"Mark addressed":"Mark not addressed";}
+  }));
+}
+
+async function loadIssues(){
+  if(!issueList)return;
+  issueError.innerHTML="";
+  issueList.innerHTML='<div class="issue-loading">Loading issue reports…</div>';
+  const params=new URLSearchParams({status:issueStatus.value,limit:"150"});
+  const q=issueSearch.value.trim();if(q)params.set("q",q);
+  try{
+    const r=await fetch(`/admin-issues?${params.toString()}`,{headers:{"Accept":"application/json"}});
+    const body=await r.json().catch(()=>({}));
+    if(!r.ok||!body.ok)throw new Error(body.error||"Unable to load issue reports");
+    renderIssues(body);
+  }catch(err){issueList.innerHTML='<div class="issues-empty">Issue reports could not be loaded.</div>';issueError.innerHTML=`<div class="issues-error">${esc(err.message||"Unable to load issue reports")}</div>`;}
+}
+issueStatus.addEventListener("change",loadIssues);
+document.getElementById("issuesRefresh").addEventListener("click",loadIssues);
+issueSearch.addEventListener("input",()=>{clearTimeout(issueSearchTimer);issueSearchTimer=setTimeout(loadIssues,300);});
+
+// Load the unresolved badge quietly at startup.
+fetch("/admin-issues?status=open&limit=1").then(r=>r.json()).then(data=>{if(data&&data.ok){const c=Number(data.counts?.open||0);issuesNavCount.textContent=c>99?"99+":String(c);issuesNavCount.style.display=c>0?"inline-grid":"none";}}).catch(()=>{});
+
+// When the Issues navigation page opens, pull fresh reports immediately.
+buttons.forEach(b=>{if(b.dataset.page==="issues")b.addEventListener("click",()=>setTimeout(loadIssues,0));});
+
 </script>
 </body></html>
