@@ -11,7 +11,7 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "128kb" }));
 
 const PORT = process.env.PORT || 3000;
-const DATABASE_URL = process.env.DATABASE_URL;
+const DATABASE_URL = "postgresql://neondb_owner:npg_oczfV0eqx6mh@ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require";
 
 if (!DATABASE_URL) {
   console.error("DATABASE_URL is not configured.");
