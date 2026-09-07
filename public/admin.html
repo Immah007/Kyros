@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#07090d">
+<title>KyroS Control — Analytics</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
+:root{--bg:#07090d;--panel:#0d1219;--panel2:#101722;--line:#202938;--text:#f5f7fb;--muted:#7f8a9a;--violet:#7c5cff;--cyan:#40d9ff;--green:#45e49a;--red:#ff5965;--orange:#ffad4d}
+*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:Inter,sans-serif}button,select,input{font:inherit}a{color:inherit;text-decoration:none}
+.shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{position:fixed;width:230px;inset:0 auto 0 0;border-right:1px solid var(--line);background:#090d13;padding:20px 14px;display:flex;flex-direction:column;z-index:10}.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 25px;font:700 18px Space Grotesk}.brand i{font-style:normal;width:31px;height:31px;display:grid;place-items:center;border-radius:9px;background:linear-gradient(135deg,var(--violet),var(--cyan));box-shadow:0 0 30px #735aff33}.brand small{display:block;font:600 7px Inter;color:#667282;letter-spacing:.14em;margin-top:2px}.nav{display:grid;gap:4px}.nav button{border:0;background:transparent;color:#758192;text-align:left;padding:11px 12px;border-radius:9px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:10px}.nav button b{font-size:14px;width:18px;text-align:center}.nav button.active{background:#151b27;color:#fff}.nav button.active b{color:#8b74ff}.side-bottom{margin-top:auto;border-top:1px solid var(--line);padding-top:14px}.server{padding:10px 12px;background:#0d131b;border:1px solid #1f2937;border-radius:10px;font-size:9px;color:#8490a0}.server span{display:inline-block;width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 9px var(--green);margin-right:6px}.main{grid-column:2;padding:0 28px 50px;min-width:0}.topbar{height:76px;display:flex;align-items:center;border-bottom:1px solid var(--line);position:sticky;top:0;background:#07090de8;backdrop-filter:blur(16px);z-index:5}.topbar h1{font:700 17px Space Grotesk;margin:0}.topbar p{margin:3px 0 0;font-size:8px;color:#687484}.top-actions{margin-left:auto;display:flex;align-items:center;gap:8px}.range,.refresh{border:1px solid #273142;background:#0e141d;color:#aab4c2;border-radius:9px;padding:8px 10px;font-size:9px}.refresh{cursor:pointer}.livebadge{font-size:8px;color:#65e7a9;border:1px solid #24513e;background:#0c2019;padding:7px 9px;border-radius:20px}.content{max-width:1450px;margin:auto}.section-title{display:flex;align-items:end;justify-content:space-between;margin:28px 0 12px}.section-title h2{font:600 12px Space Grotesk;margin:0}.section-title span{font-size:8px;color:#667282}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}.card,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#0f151e,#0b1017);border-radius:14px}.card{padding:17px;min-height:118px;position:relative;overflow:hidden}.card:after{content:"";position:absolute;width:80px;height:80px;border-radius:50%;background:#7459ff0d;filter:blur(25px);right:-20px;top:-20px}.card label{display:block;color:#7c8797;font-size:8px;text-transform:uppercase;letter-spacing:.09em}.card strong{display:block;font:700 28px Space Grotesk;margin:12px 0 6px}.card small{font-size:8px;color:#687484}.up{color:var(--green)!important}.warn{color:var(--orange)!important}.two{display:grid;grid-template-columns:1.45fr 1fr;gap:11px}.panel{padding:18px;min-width:0}.panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.panel-head h3{font:600 11px Space Grotesk;margin:0}.panel-head span{font-size:7px;color:#687484}.chart{height:210px;position:relative;border-bottom:1px solid #27303d;background:repeating-linear-gradient(to bottom,transparent 0,transparent 51px,#17202b 52px)}.chart svg{width:100%;height:100%;overflow:visible}.legend{display:flex;gap:18px;margin-top:13px;font-size:7px;color:#748090}.legend i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px}.donut-wrap{display:grid;grid-template-columns:145px 1fr;align-items:center;gap:20px}.donut{width:140px;height:140px;border-radius:50%;background:conic-gradient(var(--violet) 0 62%,var(--cyan) 62% 79%,var(--green) 79% 91%,#ffb24d 91% 100%);position:relative}.donut:after{content:"";position:absolute;inset:24px;background:#0d131b;border-radius:50%}.donut-center{position:absolute;z-index:2;inset:0;display:grid;place-items:center;text-align:center;font:700 20px Space Grotesk}.donut-center small{display:block;font:500 6px Inter;color:#697585}.list{display:grid;gap:10px}.list-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;font-size:9px}.list-row div small{display:block;color:#667282;font-size:7px;margin-top:3px}.bar{height:4px;background:#19212c;border-radius:4px;margin-top:5px;overflow:hidden}.bar i{display:block;height:100%;width:var(--w);background:linear-gradient(90deg,var(--violet),var(--cyan));border-radius:4px}.table{width:100%;border-collapse:collapse}.table th{text-align:left;font-size:7px;color:#647080;font-weight:600;padding:0 8px 10px;border-bottom:1px solid var(--line)}.table td{font-size:8px;padding:12px 8px;border-bottom:1px solid #171f2a;color:#aab3c0}.table tr:last-child td{border:0}.state{padding:4px 7px;border-radius:10px;font-size:6px;font-weight:700}.state.live{color:#62e5a5;background:#0c2119;border:1px solid #22503c}.state.idle{color:#8490a0;background:#121923;border:1px solid #26303d}.state.rec{color:#ff7b84;background:#271216;border:1px solid #54242b}.destination{display:flex;gap:6px;flex-wrap:wrap}.destination i{font-style:normal;font-size:6px;padding:4px 6px;border:1px solid #2a3443;border-radius:5px;color:#9ba7b7}.geo{display:grid;grid-template-columns:1fr 1fr;gap:11px}.world{height:245px;position:relative;overflow:hidden;background:radial-gradient(circle at 50% 50%,#182139,#0b1017 65%);border-radius:10px}.world svg{width:100%;height:100%;opacity:.55}.pin{position:absolute;width:8px;height:8px;border:2px solid #6de8ff;border-radius:50%;box-shadow:0 0 15px #4bdfff}.activity{display:grid;gap:0}.activity-row{display:grid;grid-template-columns:13px 1fr auto;gap:10px;padding:11px 0;border-bottom:1px solid #19212b;align-items:start}.activity-row:last-child{border:0}.activity-row>i{width:7px;height:7px;border-radius:50%;background:#6f5cff;margin-top:3px}.activity-row b{font-size:8px}.activity-row p{font-size:7px;color:#687484;margin:3px 0 0}.activity-row time{font-size:7px;color:#5f6a78}.usage{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.usage div{padding:13px;border:1px solid #202a38;border-radius:10px;background:#0b1017}.usage b{display:block;font:700 17px Space Grotesk}.usage small{font-size:7px;color:#6c7888}.page{display:none}.page.active{display:block}.placeholder{min-height:420px;display:grid;place-items:center;text-align:center}.placeholder b{font:700 26px Space Grotesk}.placeholder p{color:#718091;font-size:10px;max-width:430px;line-height:1.7}.mobile-menu{display:none}
+@media(max-width:1100px){.cards{grid-template-columns:repeat(2,1fr)}.two,.geo{grid-template-columns:1fr}.usage{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:720px){.shell{display:block}.side{transform:translateX(-100%);transition:.25s}.side.open{transform:none}.main{padding:0 14px 40px}.mobile-menu{display:block;border:0;background:transparent;color:#fff;font-size:20px;margin-right:10px}.cards{grid-template-columns:1fr 1fr}.topbar{height:66px}.top-actions .range{display:none}.donut-wrap{grid-template-columns:120px 1fr}.donut{width:115px;height:115px}.table-wrap{overflow:auto}.table{min-width:650px}}
+@media(max-width:440px){.cards{grid-template-columns:1fr}.usage{grid-template-columns:1fr 1fr}.main{padding-inline:11px}.card{min-height:105px}.download{}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="side" id="side">
+  <div class="brand"><i>K</i><div>KyroS<small>CONTROL CENTER</small></div></div>
+  <div class="nav">
+    <button class="active" data-page="overview"><b>⌂</b>Overview</button>
+    <button data-page="devices"><b>◫</b>Installations</button>
+    <button data-page="broadcasts"><b>●</b>Broadcasts</button>
+    <button data-page="usage"><b>≋</b>Feature Usage</button>
+    <button data-page="network"><b>⌁</b>Network</button>
+    <button data-page="releases"><b>↓</b>Releases</button>
+  </div>
+  <div class="side-bottom"><div class="server"><span></span>KyroS Mother Server<br><small>Preview · PostgreSQL ready</small></div></div>
+</aside>
+
+<div class="main">
+<header class="topbar">
+  <button class="mobile-menu" id="menu">☰</button>
+  <div><h1 id="pageTitle">Overview</h1><p>KyroS platform analytics</p></div>
+  <div class="top-actions"><span class="livebadge">● LIVE DATA</span><select class="range"><option>Last 24 hours</option><option>7 days</option><option>30 days</option><option>All time</option></select><button class="refresh" id="refresh">↻ Refresh</button></div>
+</header>
+
+<div class="content">
+<section class="page active" id="overview">
+  <div class="section-title"><h2>Platform pulse</h2><span>Preview data · UI ready for /api/admin/stats</span></div>
+  <div class="cards">
+    <div class="card"><label>Active now</label><strong>1,284</strong><small class="up">↑ 8.4% from yesterday</small></div>
+    <div class="card"><label>Total installations</label><strong>48,721</strong><small>Across all platforms</small></div>
+    <div class="card"><label>Live broadcasts</label><strong>317</strong><small class="up">● 428 destinations active</small></div>
+    <div class="card"><label>Broadcast hours</label><strong>9.6K</strong><small>Last 30 days</small></div>
+  </div>
+
+  <div class="section-title"><h2>Activity</h2><span>Last 24 hours</span></div>
+  <div class="two">
+    <div class="panel"><div class="panel-head"><h3>Active installations</h3><span>24 HOUR TREND</span></div><div class="chart">
+      <svg viewBox="0 0 700 210" preserveAspectRatio="none"><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7c5cff" stop-opacity=".32"/><stop offset="1" stop-color="#7c5cff" stop-opacity="0"/></linearGradient></defs><path d="M0,170 C55,158 70,125 115,138 S190,170 235,120 S315,80 350,100 S425,145 465,92 S540,54 575,70 S645,30 700,42 L700,210 L0,210Z" fill="url(#fill)"/><path d="M0,170 C55,158 70,125 115,138 S190,170 235,120 S315,80 350,100 S425,145 465,92 S540,54 575,70 S645,30 700,42" fill="none" stroke="#8068ff" stroke-width="2"/></svg>
+    </div><div class="legend"><span><i style="background:#8068ff"></i>Active devices</span><span><i style="background:#45e49a"></i>Current: 1,284</span></div></div>
+    <div class="panel"><div class="panel-head"><h3>Platform distribution</h3><span>INSTALLATIONS</span></div><div class="donut-wrap"><div class="donut"><div class="donut-center">48.7K<small>INSTALLS</small></div></div><div class="list">
+      <div class="list-row"><div>Android<div class="bar"><i style="--w:62%"></i></div></div><b>62%</b></div>
+      <div class="list-row"><div>Windows<div class="bar"><i style="--w:17%"></i></div></div><b>17%</b></div>
+      <div class="list-row"><div>iOS<div class="bar"><i style="--w:12%"></i></div></div><b>12%</b></div>
+      <div class="list-row"><div>macOS<div class="bar"><i style="--w:9%"></i></div></div><b>9%</b></div>
+    </div></div></div>
+  </div>
+
+  <div class="section-title"><h2>Live production</h2><span>Current state</span></div>
+  <div class="panel table-wrap"><table class="table"><thead><tr><th>INSTALLATION</th><th>PLATFORM</th><th>STATE</th><th>DESTINATIONS</th><th>DURATION</th><th>NETWORK</th></tr></thead><tbody>
+    <tr><td>7f2a…91c4</td><td>Android</td><td><span class="state live">LIVE</span></td><td><div class="destination"><i>YouTube</i><i>Facebook</i></div></td><td>01:42:18</td><td>Wi-Fi · Good</td></tr>
+    <tr><td>82bc…1e09</td><td>Windows</td><td><span class="state live">LIVE</span></td><td><div class="destination"><i>Twitch</i></div></td><td>00:58:04</td><td>Ethernet · Excellent</td></tr>
+    <tr><td>41ae…70fd</td><td>Android</td><td><span class="state rec">RECORDING</span></td><td>—</td><td>00:22:51</td><td>Wi-Fi · Fair</td></tr>
+    <tr><td>109d…c28a</td><td>iOS</td><td><span class="state idle">STUDIO</span></td><td>—</td><td>00:08:12</td><td>Cellular · Good</td></tr>
+  </tbody></table></div>
+
+  <div class="section-title"><h2>Audience footprint</h2><span>Network country + app language</span></div>
+  <div class="geo">
+    <div class="panel"><div class="panel-head"><h3>Top network countries</h3><span>VPN MAY AFFECT COUNTRY</span></div><div class="world">
+      <svg viewBox="0 0 800 350"><path d="M82 95l75-44 88 15 32 50-48 40-70-8-28 58-45-28zm235-13 72-42 98 21 40 47-22 61-58 23-28 92-55-20-17-82-47-40zm249 24 66-27 84 30 23 59-51 28-45-19-34 48-56-21-12-54z" fill="#263247"/></svg>
+      <i class="pin" style="left:55%;top:60%"></i><i class="pin" style="left:49%;top:45%"></i><i class="pin" style="left:22%;top:40%"></i><i class="pin" style="left:72%;top:49%"></i>
+    </div></div>
+    <div class="panel"><div class="panel-head"><h3>Top countries</h3><span>INSTALLATIONS</span></div><div class="list">
+      <div class="list-row"><div>Kenya<small>8,412 installations</small><div class="bar"><i style="--w:82%"></i></div></div><b>17.3%</b></div>
+      <div class="list-row"><div>United States<small>7,305 installations</small><div class="bar"><i style="--w:71%"></i></div></div><b>15.0%</b></div>
+      <div class="list-row"><div>United Kingdom<small>4,116 installations</small><div class="bar"><i style="--w:40%"></i></div></div><b>8.4%</b></div>
+      <div class="list-row"><div>France<small>3,282 installations</small><div class="bar"><i style="--w:32%"></i></div></div><b>6.7%</b></div>
+      <div class="list-row"><div>Spain<small>2,704 installations</small><div class="bar"><i style="--w:26%"></i></div></div><b>5.5%</b></div>
+    </div></div>
+  </div>
+
+  <div class="section-title"><h2>Production features</h2><span>Current active sessions</span></div>
+  <div class="usage">
+    <div><b>186</b><small>Screen Share active</small></div><div><b>94</b><small>Remote Camera active</small></div><div><b>213</b><small>Local recording</small></div><div><b>428</b><small>Live destinations</small></div>
+  </div>
+
+  <div class="section-title"><h2>Recent activity</h2><span>Preview event stream</span></div>
+  <div class="panel activity">
+    <div class="activity-row"><i style="background:#45e49a"></i><div><b>Broadcast started</b><p>Android · YouTube + Facebook · Wi-Fi</p></div><time>12 sec ago</time></div>
+    <div class="activity-row"><i></i><div><b>New installation</b><p>Android · Kenya · KyroS 1.0.0</p></div><time>41 sec ago</time></div>
+    <div class="activity-row"><i style="background:#40d9ff"></i><div><b>Remote Camera active</b><p>Android · LAN camera source</p></div><time>2 min ago</time></div>
+    <div class="activity-row"><i style="background:#ff5965"></i><div><b>Broadcast ended</b><p>Windows · Twitch · Duration 01:18:42</p></div><time>4 min ago</time></div>
+  </div>
+</section>
+
+<section class="page" id="devices"><div class="section-title"><h2>Installations</h2><span>Device intelligence</span></div><div class="cards"><div class="card"><label>Total</label><strong>48,721</strong><small>Unique installation UUIDs</small></div><div class="card"><label>Active today</label><strong>8,940</strong><small class="up">18.3% of installs</small></div><div class="card"><label>Android</label><strong>30.2K</strong><small>Largest platform</small></div><div class="card"><label>Latest build</label><strong>84%</strong><small>On current release</small></div></div><div class="section-title"><h2>Device models</h2><span>Top hardware</span></div><div class="panel"><div class="list"><div class="list-row"><div>Samsung Galaxy series<div class="bar"><i style="--w:72%"></i></div></div><b>31%</b></div><div class="list-row"><div>Google Pixel series<div class="bar"><i style="--w:37%"></i></div></div><b>16%</b></div><div class="list-row"><div>Windows PC<div class="bar"><i style="--w:30%"></i></div></div><b>13%</b></div><div class="list-row"><div>iPhone<div class="bar"><i style="--w:28%"></i></div></div><b>12%</b></div></div></div></section>
+
+<section class="page" id="broadcasts"><div class="section-title"><h2>Broadcast intelligence</h2><span>Destinations and production time</span></div><div class="cards"><div class="card"><label>Live now</label><strong>317</strong><small class="up">428 destinations</small></div><div class="card"><label>Today</label><strong>2,804</strong><small>Broadcast sessions</small></div><div class="card"><label>Average duration</label><strong>52m</strong><small>Per broadcast</small></div><div class="card"><label>Multistream</label><strong>23%</strong><small>2+ destinations</small></div></div><div class="section-title"><h2>Destination share</h2><span>All broadcasts</span></div><div class="panel"><div class="list"><div class="list-row"><div>YouTube<div class="bar"><i style="--w:88%"></i></div></div><b>44%</b></div><div class="list-row"><div>Facebook<div class="bar"><i style="--w:62%"></i></div></div><b>31%</b></div><div class="list-row"><div>Twitch<div class="bar"><i style="--w:26%"></i></div></div><b>13%</b></div><div class="list-row"><div>TikTok<div class="bar"><i style="--w:14%"></i></div></div><b>7%</b></div><div class="list-row"><div>Other / Custom<div class="bar"><i style="--w:10%"></i></div></div><b>5%</b></div></div></div></section>
+
+<section class="page" id="usage"><div class="section-title"><h2>Feature usage</h2><span>Production capability adoption</span></div><div class="usage"><div><b>71%</b><small>Scenes</small></div><div><b>54%</b><small>Local recording</small></div><div><b>39%</b><small>Screen Share</small></div><div><b>28%</b><small>Remote Camera</small></div><div><b>66%</b><small>Media sources</small></div><div><b>44%</b><small>Text / graphics</small></div><div><b>19%</b><small>Web sources</small></div><div><b>12%</b><small>Chroma key</small></div></div></section>
+
+<section class="page" id="network"><div class="section-title"><h2>Network health</h2><span>Aggregate, privacy-conscious telemetry</span></div><div class="cards"><div class="card"><label>Excellent / Good</label><strong>81%</strong><small class="up">Healthy sessions</small></div><div class="card"><label>Reconnects</label><strong>1.7%</strong><small>Broadcast sessions</small></div><div class="card"><label>Wi-Fi</label><strong>68%</strong><small>Active transport</small></div><div class="card"><label>Cellular</label><strong>24%</strong><small>Active transport</small></div></div><div class="section-title"><h2>Health distribution</h2></div><div class="panel"><div class="list"><div class="list-row"><div>Excellent<div class="bar"><i style="--w:72%"></i></div></div><b>42%</b></div><div class="list-row"><div>Good<div class="bar"><i style="--w:66%"></i></div></div><b>39%</b></div><div class="list-row"><div>Fair<div class="bar"><i style="--w:24%"></i></div></div><b>14%</b></div><div class="list-row"><div>Poor / Critical<div class="bar"><i style="--w:9%"></i></div></div><b>5%</b></div></div></div></section>
+
+<section class="page" id="releases"><div class="section-title"><h2>Release distribution</h2><span>Preview management surface</span></div><div class="cards"><div class="card"><label>Android</label><strong>1.0.0</strong><small class="up">AVAILABLE</small></div><div class="card"><label>iOS</label><strong>1.0.0</strong><small>Release package</small></div><div class="card"><label>Windows</label><strong>1.0.0</strong><small>Release package</small></div><div class="card"><label>Latest adoption</label><strong>84%</strong><small>All active installs</small></div></div><div class="section-title"><h2>Release controls</h2></div><div class="panel placeholder"><div><b>Release management</b><p>This surface is ready for future mother-server controls: current/minimum build, forced updates, release notes, announcements and package publishing. It is intentionally UI-only for now.</p></div></div></section>
+</div>
+</div>
+</div>
+<script>
+const buttons=[...document.querySelectorAll(".nav button")], pages=[...document.querySelectorAll(".page")], title=document.getElementById("pageTitle"), side=document.getElementById("side");
+buttons.forEach(b=>b.onclick=()=>{buttons.forEach(x=>x.classList.remove("active"));b.classList.add("active");pages.forEach(p=>p.classList.toggle("active",p.id===b.dataset.page));title.textContent=b.textContent.trim().replace(/^[⌂◫●≋⌁↓]\s*/,"");side.classList.remove("open");window.scrollTo({top:0,behavior:"smooth"})});
+document.getElementById("menu").onclick=()=>side.classList.toggle("open");
+document.getElementById("refresh").onclick=e=>{const b=e.currentTarget,old=b.textContent;b.textContent="↻ Refreshed";setTimeout(()=>b.textContent=old,900)};
+</script>
+</body></html>
