@@ -3,439 +3,189 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#07090d">
-<title>KyroS Control — Analytics</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<title>KyroS Mother Server Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap');
-:root{--bg:#07090d;--panel:#0d1219;--panel2:#101722;--line:#202938;--text:#f5f7fb;--muted:#7f8a9a;--violet:#7c5cff;--cyan:#40d9ff;--green:#45e49a;--red:#ff5965;--orange:#ffad4d}
-*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:Inter,sans-serif}button,select,input{font:inherit}a{color:inherit;text-decoration:none}
-.shell{display:grid;grid-template-columns:230px 1fr;min-height:100vh}.side{position:fixed;width:230px;inset:0 auto 0 0;border-right:1px solid var(--line);background:#090d13;padding:20px 14px;display:flex;flex-direction:column;z-index:10}.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 25px;font:700 18px Space Grotesk}.brand i{font-style:normal;width:31px;height:31px;display:grid;place-items:center;border-radius:9px;background:linear-gradient(135deg,var(--violet),var(--cyan));box-shadow:0 0 30px #735aff33}.brand small{display:block;font:600 7px Inter;color:#667282;letter-spacing:.14em;margin-top:2px}.nav{display:grid;gap:4px}.nav button{border:0;background:transparent;color:#758192;text-align:left;padding:11px 12px;border-radius:9px;font-size:11px;cursor:pointer;display:flex;align-items:center;gap:10px}.nav button b{font-size:14px;width:18px;text-align:center}.nav button.active{background:#151b27;color:#fff}.nav button.active b{color:#8b74ff}.side-bottom{margin-top:auto;border-top:1px solid var(--line);padding-top:14px}.server{padding:10px 12px;background:#0d131b;border:1px solid #1f2937;border-radius:10px;font-size:9px;color:#8490a0}.server span{display:inline-block;width:6px;height:6px;background:var(--green);border-radius:50%;box-shadow:0 0 9px var(--green);margin-right:6px}.main{grid-column:2;padding:0 28px 50px;min-width:0}.topbar{height:76px;display:flex;align-items:center;border-bottom:1px solid var(--line);position:sticky;top:0;background:#07090de8;backdrop-filter:blur(16px);z-index:5}.topbar h1{font:700 17px Space Grotesk;margin:0}.topbar p{margin:3px 0 0;font-size:8px;color:#687484}.top-actions{margin-left:auto;display:flex;align-items:center;gap:8px}.range,.refresh{border:1px solid #273142;background:#0e141d;color:#aab4c2;border-radius:9px;padding:8px 10px;font-size:9px}.refresh{cursor:pointer}.livebadge{font-size:8px;color:#65e7a9;border:1px solid #24513e;background:#0c2019;padding:7px 9px;border-radius:20px}.content{max-width:1450px;margin:auto}.section-title{display:flex;align-items:end;justify-content:space-between;margin:28px 0 12px}.section-title h2{font:600 12px Space Grotesk;margin:0}.section-title span{font-size:8px;color:#667282}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}.card,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#0f151e,#0b1017);border-radius:14px}.card{padding:17px;min-height:118px;position:relative;overflow:hidden}.card:after{content:"";position:absolute;width:80px;height:80px;border-radius:50%;background:#7459ff0d;filter:blur(25px);right:-20px;top:-20px}.card label{display:block;color:#7c8797;font-size:8px;text-transform:uppercase;letter-spacing:.09em}.card strong{display:block;font:700 28px Space Grotesk;margin:12px 0 6px}.card small{font-size:8px;color:#687484}.up{color:var(--green)!important}.warn{color:var(--orange)!important}.two{display:grid;grid-template-columns:1.45fr 1fr;gap:11px}.panel{padding:18px;min-width:0}.panel-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.panel-head h3{font:600 11px Space Grotesk;margin:0}.panel-head span{font-size:7px;color:#687484}.chart{height:210px;position:relative;border-bottom:1px solid #27303d;background:repeating-linear-gradient(to bottom,transparent 0,transparent 51px,#17202b 52px)}.chart svg{width:100%;height:100%;overflow:visible}.legend{display:flex;gap:18px;margin-top:13px;font-size:7px;color:#748090}.legend i{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px}.donut-wrap{display:grid;grid-template-columns:145px 1fr;align-items:center;gap:20px}.donut{width:140px;height:140px;border-radius:50%;background:conic-gradient(var(--violet) 0 62%,var(--cyan) 62% 79%,var(--green) 79% 91%,#ffb24d 91% 100%);position:relative}.donut:after{content:"";position:absolute;inset:24px;background:#0d131b;border-radius:50%}.donut-center{position:absolute;z-index:2;inset:0;display:grid;place-items:center;text-align:center;font:700 20px Space Grotesk}.donut-center small{display:block;font:500 6px Inter;color:#697585}.list{display:grid;gap:10px}.list-row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;font-size:9px}.list-row div small{display:block;color:#667282;font-size:7px;margin-top:3px}.bar{height:4px;background:#19212c;border-radius:4px;margin-top:5px;overflow:hidden}.bar i{display:block;height:100%;width:var(--w);background:linear-gradient(90deg,var(--violet),var(--cyan));border-radius:4px}.table{width:100%;border-collapse:collapse}.table th{text-align:left;font-size:7px;color:#647080;font-weight:600;padding:0 8px 10px;border-bottom:1px solid var(--line)}.table td{font-size:8px;padding:12px 8px;border-bottom:1px solid #171f2a;color:#aab3c0}.table tr:last-child td{border:0}.state{padding:4px 7px;border-radius:10px;font-size:6px;font-weight:700}.state.live{color:#62e5a5;background:#0c2119;border:1px solid #22503c}.state.idle{color:#8490a0;background:#121923;border:1px solid #26303d}.state.rec{color:#ff7b84;background:#271216;border:1px solid #54242b}.destination{display:flex;gap:6px;flex-wrap:wrap}.destination i{font-style:normal;font-size:6px;padding:4px 6px;border:1px solid #2a3443;border-radius:5px;color:#9ba7b7}.geo{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(260px,.65fr);gap:11px;align-items:stretch}
-.world{height:clamp(420px,52vw,650px);position:relative;overflow:hidden;background:#05080d;border-radius:12px;border:1px solid #1d2632}
-#worldMap{height:100%;width:100%;border-radius:12px;background:#05080d;touch-action:none}
-.leaflet-container{background:#05080d;font-family:Inter,sans-serif;outline:0}
-.leaflet-control-zoom{border:1px solid #273142!important;border-radius:10px!important;overflow:hidden;box-shadow:0 8px 26px #0008!important}
-.leaflet-control-zoom a{width:36px!important;height:36px!important;line-height:34px!important;background:#0d141e!important;color:#e5ebf4!important;border-color:#273142!important;font-size:20px!important}
-.leaflet-control-zoom a:hover{background:#171f2b!important}
-.leaflet-control-attribution{background:#070b11d9!important;color:#697789!important;font-size:7px!important;padding:2px 5px!important}
-.leaflet-control-attribution a{color:#9180ff!important}
-.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#101722;color:#f5f7fb}.leaflet-popup-content-wrapper{border:1px solid #2a3544;box-shadow:0 14px 45px #0009}.map-popup b{font-size:11px}.map-popup small{color:#8d99a9;line-height:1.75}
-.map-overlay{position:absolute;left:12px;bottom:12px;z-index:500;max-width:min(360px,calc(100% - 24px));background:#080e17e8;border:1px solid #263142;border-radius:10px;padding:10px 11px;backdrop-filter:blur(10px);pointer-events:none}
-.map-overlay b{display:block;font-size:8px;margin-bottom:7px}.map-legend{display:flex;flex-wrap:wrap;gap:8px 12px;color:#8895a6;font-size:7px}.map-legend span{display:inline-flex;align-items:center;gap:5px}.map-legend i{display:inline-block;border-radius:50%;box-shadow:none}.map-note{margin-top:7px;font-size:7px;color:#667382;line-height:1.4}
-.city-label{background:transparent!important;border:0!important;box-shadow:none!important;color:#b8c2cf!important;font-size:8px!important;font-weight:600!important;text-shadow:0 1px 4px #000,0 0 8px #000}.city-label:before{display:none!important}
-.country-shape{transition:fill .15s ease,stroke .15s ease}.activity-dot{filter:none}
-.activity{display:grid;gap:0}.activity-row{display:grid;grid-template-columns:13px 1fr auto;gap:10px;padding:11px 0;border-bottom:1px solid #19212b;align-items:start}.activity-row:last-child{border:0}.activity-row>i{width:7px;height:7px;border-radius:50%;background:#6f5cff;margin-top:3px}.activity-row b{font-size:8px}.activity-row p{font-size:7px;color:#687484;margin:3px 0 0}.activity-row time{font-size:7px;color:#5f6a78}.usage{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.usage div{padding:13px;border:1px solid #202a38;border-radius:10px;background:#0b1017}.usage b{display:block;font:700 17px Space Grotesk}.usage small{font-size:7px;color:#6c7888}.page{display:none}.page.active{display:block}.placeholder{min-height:420px;display:grid;place-items:center;text-align:center}.placeholder b{font:700 26px Space Grotesk}.placeholder p{color:#718091;font-size:10px;max-width:430px;line-height:1.7}.mobile-menu{display:none}
-@media(max-width:1100px){.cards{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}.geo{grid-template-columns:1fr}.usage{grid-template-columns:repeat(2,1fr)}.world{height:clamp(430px,62vw,620px)}}
-@media(max-width:720px){.shell{display:block}.side{width:min(84vw,270px);transform:translateX(-105%);transition:.25s;box-shadow:18px 0 45px #0009}.side.open{transform:none}.main{padding:0 12px 34px}.mobile-menu{display:block;border:0;background:transparent;color:#fff;font-size:20px;margin-right:8px;min-width:42px;min-height:42px}.cards{grid-template-columns:1fr 1fr}.topbar{height:auto;min-height:66px;padding:8px 0;gap:4px}.topbar h1{font-size:15px}.topbar p{font-size:7px}.top-actions{gap:5px}.top-actions .range{display:none}.refresh{padding:8px;font-size:0}.refresh::first-letter{font-size:14px}.livebadge{font-size:7px;padding:6px 7px}.section-title{margin-top:20px}.panel{padding:13px}.donut-wrap{grid-template-columns:110px 1fr}.donut{width:105px;height:105px}.table-wrap{overflow:auto;-webkit-overflow-scrolling:touch}.table{min-width:650px}.world{height:440px;border-radius:10px}.leaflet-control-zoom a{width:42px!important;height:42px!important;line-height:40px!important}.map-overlay{left:8px;right:8px;bottom:8px;max-width:none;padding:8px 9px}.map-legend{gap:6px 9px}.geo>.panel:first-child{padding:8px}.geo>.panel:first-child .panel-head{padding:4px 4px 0;margin-bottom:10px}.geo>.panel:first-child .panel-head span{max-width:48%;text-align:right;line-height:1.4}}
-@media(max-width:440px){.cards{grid-template-columns:1fr}.usage{grid-template-columns:1fr 1fr}.main{padding-inline:9px}.card{min-height:102px}.card strong{font-size:24px}.world{height:400px}.geo>.panel:first-child{padding:6px}.map-overlay b{font-size:7px}.map-legend{font-size:6.5px}.map-note{font-size:6.5px}.section-title span{max-width:54%;text-align:right}.top-actions .livebadge{display:none}}
-@media(max-width:360px){.usage{grid-template-columns:1fr}.world{height:370px}.map-overlay{display:none}}
-
-/* Issue reporting admin */
-.nav-count{margin-left:auto;min-width:19px;height:19px;padding:0 6px;border-radius:10px;display:inline-grid;place-items:center;background:#24171c;border:1px solid #53303a;color:#ff9da5;font-size:8px;font-weight:800}
-.issue-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.issue-toolbar input,.issue-toolbar select{height:38px;border:1px solid #273142;background:#0b1119;color:#e6ebf2;border-radius:9px;padding:0 10px;font-size:9px;outline:none}.issue-toolbar input{flex:1;min-width:190px}.issue-toolbar button{height:38px;border:1px solid #273142;background:#121923;color:#cdd6e2;border-radius:9px;padding:0 12px;font-size:9px;cursor:pointer}.issue-toolbar button:hover{background:#18212d}
-.issue-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}.issue-summary .mini{border:1px solid var(--line);background:#0d1219;border-radius:12px;padding:14px}.issue-summary label{display:block;color:#758192;font-size:7px;text-transform:uppercase;letter-spacing:.08em}.issue-summary strong{display:block;font:700 22px Space Grotesk;margin-top:7px}.issue-summary .open-count{color:#ff9b65}.issue-summary .done-count{color:#67dea4}
-.issue-list{display:grid;gap:9px}.issue-item{border:1px solid #202938;background:#0b1017;border-radius:12px;overflow:hidden}.issue-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px 13px;cursor:pointer}.issue-status-dot{width:7px;height:7px;border-radius:50%;background:#ff9b65}.issue-item.addressed .issue-status-dot{background:#45e49a}.issue-title{min-width:0}.issue-title b{display:block;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.issue-title small{display:block;color:#687484;font-size:7px;margin-top:3px}.issue-state{font-size:7px;font-weight:800;padding:5px 8px;border-radius:12px;border:1px solid #5a3a29;color:#ffb076;background:#20150f}.issue-item.addressed .issue-state{border-color:#27533f;color:#6ae5a9;background:#0d2018}.issue-body{display:none;border-top:1px solid #1a222d;padding:13px}.issue-item.expanded .issue-body{display:block}.issue-description{white-space:pre-wrap;font-size:9px;line-height:1.65;color:#c4ccd6;background:#090e14;border:1px solid #1c2531;border-radius:9px;padding:12px}.issue-meta{display:flex;gap:7px;flex-wrap:wrap;margin:10px 0}.issue-meta span{font-size:7px;color:#8793a3;padding:5px 7px;border:1px solid #25303e;border-radius:6px;background:#101620}.issue-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:10px}.issue-actions button{border:1px solid #2b3747;background:#121923;color:#d7dfea;border-radius:8px;padding:8px 10px;font-size:8px;cursor:pointer}.issue-actions button.primary{border-color:#2c6049;background:#10251c;color:#71e6ac}.issue-actions button.reopen{border-color:#60412c;background:#24180f;color:#ffb77f}.issues-empty{padding:38px 20px;text-align:center;color:#718091;font-size:9px}.issues-error{padding:12px;border:1px solid #5c2d34;background:#211216;color:#ff8f99;border-radius:9px;font-size:9px;margin-bottom:10px}.issue-loading{padding:30px;text-align:center;color:#718091;font-size:9px}
-@media(max-width:720px){.issue-summary{grid-template-columns:1fr 1fr 1fr}.issue-toolbar{align-items:stretch}.issue-toolbar input{min-width:100%;width:100%;font-size:16px}.issue-toolbar select{flex:1;min-width:0;font-size:16px}.issue-toolbar button{min-width:90px}.issue-head{grid-template-columns:auto minmax(0,1fr);}.issue-state{grid-column:2;justify-self:start}.issue-actions{justify-content:stretch}.issue-actions button{flex:1;min-height:42px}.issue-description{font-size:10px}}
-@media(max-width:440px){.issue-summary{grid-template-columns:1fr}.issue-summary .mini{padding:12px}.issue-summary strong{font-size:19px}}
-
+:root{--bg:#07090d;--side:#090d13;--panel:#0d131b;--panel2:#111924;--line:#202a38;--line2:#29364a;--text:#eef3f9;--muted:#7d899a;--violet:#795eff;--cyan:#41d9ff;--green:#40df9b;--orange:#ffb25f;--red:#ff667d;--blue:#66a3ff;--shadow:0 18px 50px #0006}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,system-ui,sans-serif;font-size:13px}button,input,select{font:inherit}.shell{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}.side{position:fixed;inset:0 auto 0 0;width:232px;background:var(--side);border-right:1px solid var(--line);padding:19px 14px;z-index:50;display:flex;flex-direction:column}.brand{padding:5px 9px 23px;font:700 19px Space Grotesk;letter-spacing:-.02em}.brand span{display:inline-grid;place-items:center;width:32px;height:32px;margin-right:9px;border-radius:10px;background:linear-gradient(135deg,var(--violet),var(--cyan));box-shadow:0 0 28px #765cff3d}.brand small{display:block;margin-left:43px;margin-top:-5px;font:600 7px Inter;color:#667282;letter-spacing:.14em}.nav{display:grid;gap:4px}.nav button{border:0;background:transparent;color:#788596;text-align:left;padding:11px 12px;border-radius:9px;cursor:pointer;font-size:11px;display:flex;align-items:center;gap:10px}.nav button b{width:18px;text-align:center;font-size:14px}.nav button.active{background:#151b27;color:#fff}.nav button.active b{color:#9a86ff}.badge{margin-left:auto;min-width:18px;height:18px;padding:0 5px;border-radius:10px;display:none;place-items:center;background:#3b1b23;color:#ff8ca0;font-size:8px}.side-bottom{margin-top:auto}.serverbox{padding:11px;border:1px solid var(--line);border-radius:11px;background:#0d131b;color:#8792a1;font-size:9px;line-height:1.7}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--muted);margin-right:6px}.dot.online{background:var(--green);box-shadow:0 0 10px var(--green)}.dot.offline{background:var(--red)}.main{grid-column:2;min-width:0;padding:0 28px 56px}.topbar{height:76px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:30;background:#07090de8;backdrop-filter:blur(16px);display:flex;align-items:center}.topbar h1{font:700 17px Space Grotesk;margin:0}.topbar p{margin:3px 0 0;color:#6c7888;font-size:8px}.actions{margin-left:auto;display:flex;gap:8px;align-items:center}.pill,.refresh{border:1px solid #283345;background:#0e141d;color:#aeb8c6;border-radius:9px;padding:8px 10px;font-size:9px}.refresh{cursor:pointer}.refresh:disabled{opacity:.5}.refresh.spin{animation:pulse .8s infinite alternate}@keyframes pulse{to{opacity:.45}}.content{max-width:1500px;margin:auto}.page{display:none}.page.active{display:block}.section-title{display:flex;align-items:end;justify-content:space-between;margin:27px 0 12px}.section-title h2{font:600 12px Space Grotesk;margin:0}.section-title span{font-size:8px;color:#667282}.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:11px}.card,.panel{border:1px solid var(--line);background:linear-gradient(145deg,#0f151e,#0b1017);border-radius:14px}.card{padding:17px;min-height:116px;position:relative;overflow:hidden}.card:after{content:"";position:absolute;width:90px;height:90px;border-radius:50%;background:#765cff0d;filter:blur(25px);right:-25px;top:-25px}.card label{display:block;color:#7c8797;font-size:8px;text-transform:uppercase;letter-spacing:.09em}.card strong{display:block;font:700 27px Space Grotesk;margin:12px 0 5px}.card small{font-size:8px;color:#687484}.up{color:var(--green)!important}.warn{color:var(--orange)!important}.danger{color:var(--red)!important}.grid2{display:grid;grid-template-columns:1.45fr 1fr;gap:11px}.grid3{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:11px}.panel{padding:17px;min-width:0}.panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.panel-head h3{font:600 11px Space Grotesk;margin:0}.panel-head span{font-size:7px;color:#687484}.chart{height:200px;display:flex;align-items:end;gap:5px;padding:8px 4px 22px;border-bottom:1px solid #202a38;position:relative}.barcol{flex:1;min-width:2px;border-radius:3px 3px 0 0;background:linear-gradient(180deg,#8d75ff,#4f3cae);opacity:.92;position:relative}.barcol:hover{filter:brightness(1.3)}.barcol i{display:none;position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);font-style:normal;font-size:7px;background:#161f2b;border:1px solid #2c394d;padding:3px 5px;border-radius:5px;white-space:nowrap}.barcol:hover i{display:block}.list{display:grid;gap:9px}.list-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;font-size:9px}.list-row small{display:block;color:#667282;font-size:7px;margin-top:2px}.list-row b{font:600 9px Space Grotesk}.bar{height:3px;background:#18202c;border-radius:4px;margin-top:7px;overflow:hidden}.bar i{display:block;height:100%;width:var(--w,0%);background:linear-gradient(90deg,var(--violet),var(--cyan));border-radius:4px}.world{height:390px;border:1px solid #1c2736;border-radius:11px;overflow:hidden;position:relative;background:#091019}.world #worldMap{height:100%;width:100%;background:#091019}.map-note{position:absolute;left:10px;bottom:10px;z-index:450;background:#081019dd;border:1px solid #243245;border-radius:8px;padding:7px 9px;font-size:7px;color:#8d99a8;max-width:260px;backdrop-filter:blur(6px)}.leaflet-control-attribution{font-size:6px!important;background:#081019bb!important;color:#677482!important}.leaflet-control-attribution a{color:#8ea0b6!important}.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#111925;color:#e9eef5}.leaflet-popup-content{font-size:9px}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px}table{width:100%;border-collapse:collapse;min-width:840px;background:#0b1017}th{position:sticky;top:0;background:#101720;color:#788596;text-transform:uppercase;letter-spacing:.06em;font-size:7px;text-align:left;padding:11px;border-bottom:1px solid var(--line)}td{padding:11px;border-bottom:1px solid #18212d;font-size:9px;color:#c4ceda;vertical-align:middle}tbody tr{cursor:default}tbody tr:hover{background:#111925}tbody tr.clickable{cursor:pointer}.state{display:inline-flex;padding:4px 7px;border-radius:10px;font-size:7px;font-weight:700}.state.live{background:#123526;color:#62e6a9}.state.rec{background:#3d2a12;color:#ffbd69}.state.studio{background:#1d2941;color:#82acff}.state.idle{background:#202733;color:#8e99a8}.state.bad{background:#3a1d25;color:#ff8497}.dest{display:flex;gap:4px;flex-wrap:wrap}.dest i{font-style:normal;background:#182231;border:1px solid #28364a;border-radius:6px;padding:3px 5px;font-size:7px}.activity{display:grid;gap:4px}.activity-row{display:grid;grid-template-columns:8px 1fr auto;gap:9px;align-items:start;padding:9px 0;border-bottom:1px solid #18212d}.activity-row>i{width:7px;height:7px;border-radius:50%;background:var(--violet);margin-top:3px}.activity-row b{font-size:8px}.activity-row p{margin:3px 0 0;color:#758192;font-size:7px}.activity-row time{font-size:7px;color:#5f6b7b}.empty{padding:34px;text-align:center;color:#637082;font-size:9px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}.toolbar input,.toolbar select{background:#0e141d;color:#c7d1dc;border:1px solid #273244;border-radius:8px;padding:8px 9px;font-size:9px;outline:0}.toolbar input{min-width:220px}.issue{border:1px solid var(--line);border-radius:12px;background:#0d131b;padding:14px;margin-bottom:9px}.issue-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px}.issue h4{font:600 10px Space Grotesk;margin:0}.issue p{font-size:9px;color:#a6b1bf;line-height:1.55;white-space:pre-wrap}.meta{display:flex;gap:5px;flex-wrap:wrap;margin-top:7px}.meta span{font-size:7px;border:1px solid #273244;background:#121923;color:#7f8b9b;border-radius:6px;padding:4px 6px}.issue-actions{display:flex;gap:7px;margin-top:10px}.btn{border:1px solid #2a3749;background:#141c27;color:#b8c3d1;border-radius:8px;padding:7px 9px;font-size:8px;cursor:pointer}.btn.primary{border-color:#604ee0;background:#302663;color:#ddd7ff}.btn.good{border-color:#24513e;background:#0f271d;color:#74e9b5}.jsonbox{margin-top:10px;background:#080c11;border:1px solid #1d2734;border-radius:8px;padding:9px;max-height:260px;overflow:auto;color:#95a6ba;font:8px/1.5 Consolas,monospace;white-space:pre-wrap}.drawer{position:fixed;right:-480px;top:0;bottom:0;width:min(480px,92vw);z-index:100;background:#0a0f16;border-left:1px solid var(--line);box-shadow:var(--shadow);transition:right .22s ease;padding:20px;overflow:auto}.drawer.open{right:0}.drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}.drawer h3{font:600 15px Space Grotesk;margin:0}.close{border:0;background:#141c27;color:#a9b5c3;width:30px;height:30px;border-radius:8px;cursor:pointer}.kv{display:grid;grid-template-columns:130px 1fr;gap:8px;padding:8px 0;border-bottom:1px solid #18212d;font-size:8px}.kv b{color:#6f7b8c}.kv span{word-break:break-word}.notice{padding:10px;border:1px solid #3b2c14;background:#1b140a;color:#dcb675;border-radius:9px;font-size:8px;line-height:1.5}.mobile-menu{display:none;border:1px solid #273244;background:#101720;color:#fff;border-radius:8px;width:34px;height:34px}.skeleton{opacity:.45}.muted{color:var(--muted)}
+@media(max-width:1100px){.cards{grid-template-columns:repeat(3,1fr)}.grid2,.grid3{grid-template-columns:1fr}}@media(max-width:760px){.shell{display:block}.side{transform:translateX(-100%);transition:.2s}.side.open{transform:none}.main{padding:0 12px 40px}.topbar{height:66px}.mobile-menu{display:inline-grid;place-items:center;margin-right:10px}.cards{grid-template-columns:repeat(2,1fr)}.actions .pill{display:none}.world{height:310px}}@media(max-width:450px){.cards{grid-template-columns:1fr}.card{min-height:100px}}
 </style>
 </head>
 <body>
 <div class="shell">
 <aside class="side" id="side">
-  <div class="brand"><i>K</i><div>KyroS<small>CONTROL CENTER</small></div></div>
-  <div class="nav">
+  <div class="brand"><span>K</span>KyroS<small>MOTHER SERVER</small></div>
+  <nav class="nav">
     <button class="active" data-page="overview"><b>⌂</b>Overview</button>
-    <button data-page="devices"><b>◫</b>Installations</button>
-    <button data-page="broadcasts"><b>●</b>Broadcasts</button>
-    <button data-page="usage"><b>≋</b>Feature Usage</button>
-    <button data-page="network"><b>⌁</b>Network</button>
-    <button data-page="issues"><b>!</b>Issues <span class="nav-count" id="issuesNavCount">0</span></button>
-    <button data-page="releases"><b>↓</b>Releases</button>
-  </div>
-  <div class="side-bottom"><div class="server"><span></span>KyroS Mother Server<br><small>Preview · PostgreSQL ready</small></div></div>
+    <button data-page="devices"><b>▣</b>Devices</button>
+    <button data-page="production"><b>●</b>Live production</button>
+    <button data-page="remote"><b>⌁</b>Remote camera</button>
+    <button data-page="issues"><b>!</b>Issues <span class="badge" id="issueBadge">0</span></button>
+  </nav>
+  <div class="side-bottom"><div class="serverbox"><div><i class="dot" id="serverDot"></i><b id="serverText">Connecting…</b></div><div id="serverMeta">Mother server</div></div></div>
 </aside>
+<main class="main">
+  <header class="topbar">
+    <button class="mobile-menu" id="mobileMenu">☰</button>
+    <div><h1 id="pageTitle">Overview</h1><p>Live operational data from PostgreSQL and the KyroS mother server</p></div>
+    <div class="actions"><span class="pill" id="lastUpdated">Not loaded</span><span class="pill">Auto refresh · 60s</span><button class="refresh" id="refreshBtn">Refresh now</button></div>
+  </header>
+  <div class="content">
 
-<div class="main">
-<header class="topbar">
-  <button class="mobile-menu" id="menu">☰</button>
-  <div><h1 id="pageTitle">Overview</h1><p>KyroS platform analytics</p></div>
-  <div class="top-actions"><span class="livebadge">● LIVE DATA</span><select class="range"><option>Last 24 hours</option><option>7 days</option><option>30 days</option><option>All time</option></select><button class="refresh" id="refresh">↻ Refresh</button></div>
-</header>
-
-<div class="content">
 <section class="page active" id="overview">
-  <div class="section-title"><h2>Platform pulse</h2><span>Preview data · UI ready for /api/admin/stats</span></div>
+  <div class="section-title"><h2>Platform pulse</h2><span>REAL DATA · ACTIVE = RECENT HEARTBEAT</span></div>
   <div class="cards">
-    <div class="card"><label>Active now</label><strong>1,284</strong><small class="up">↑ 8.4% from yesterday</small></div>
-    <div class="card"><label>Total installations</label><strong>48,721</strong><small>Across all platforms</small></div>
-    <div class="card"><label>Live broadcasts</label><strong>317</strong><small class="up">● 428 destinations active</small></div>
-    <div class="card"><label>Broadcast hours</label><strong>9.6K</strong><small>Last 30 days</small></div>
+    <div class="card"><label>Total installations</label><strong id="kTotal">—</strong><small>Unique installation IDs</small></div>
+    <div class="card"><label>Active now</label><strong id="kActive">—</strong><small class="up" id="kActive24">— active in 24h</small></div>
+    <div class="card"><label>Live broadcasts</label><strong id="kLive">—</strong><small class="up" id="kDestinations">— destinations</small></div>
+    <div class="card"><label>Remote links</label><strong id="kRemote">—</strong><small>Connected Internet cameras</small></div>
+    <div class="card"><label>Open issues</label><strong id="kIssues">—</strong><small class="warn">Needs attention</small></div>
   </div>
 
-  <div class="section-title"><h2>Activity</h2><span>Last 24 hours</span></div>
-  <div class="two">
-    <div class="panel"><div class="panel-head"><h3>Active installations</h3><span>24 HOUR TREND</span></div><div class="chart">
-      <svg viewBox="0 0 700 210" preserveAspectRatio="none"><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7c5cff" stop-opacity=".32"/><stop offset="1" stop-color="#7c5cff" stop-opacity="0"/></linearGradient></defs><path d="M0,170 C55,158 70,125 115,138 S190,170 235,120 S315,80 350,100 S425,145 465,92 S540,54 575,70 S645,30 700,42 L700,210 L0,210Z" fill="url(#fill)"/><path d="M0,170 C55,158 70,125 115,138 S190,170 235,120 S315,80 350,100 S425,145 465,92 S540,54 575,70 S645,30 700,42" fill="none" stroke="#8068ff" stroke-width="2"/></svg>
-    </div><div class="legend"><span><i style="background:#8068ff"></i>Active devices</span><span><i style="background:#45e49a"></i>Current: 1,284</span></div></div>
-    <div class="panel"><div class="panel-head"><h3>Platform distribution</h3><span>INSTALLATIONS</span></div><div class="donut-wrap"><div class="donut"><div class="donut-center">48.7K<small>INSTALLS</small></div></div><div class="list">
-      <div class="list-row"><div>Android<div class="bar"><i style="--w:62%"></i></div></div><b>62%</b></div>
-      <div class="list-row"><div>Windows<div class="bar"><i style="--w:17%"></i></div></div><b>17%</b></div>
-      <div class="list-row"><div>iOS<div class="bar"><i style="--w:12%"></i></div></div><b>12%</b></div>
-      <div class="list-row"><div>macOS<div class="bar"><i style="--w:9%"></i></div></div><b>9%</b></div>
-    </div></div></div>
+  <div class="section-title"><h2>Activity</h2><span>LAST 24 HOURS</span></div>
+  <div class="grid2">
+    <div class="panel"><div class="panel-head"><h3>Session activity</h3><span>LATEST SESSION HEARTBEATS BY HOUR</span></div><div class="chart" id="activityChart"></div></div>
+    <div class="panel"><div class="panel-head"><h3>Platforms</h3><span>ALL INSTALLATIONS</span></div><div class="list" id="platformList"></div></div>
   </div>
 
-  <div class="section-title"><h2>Live production</h2><span>Current state</span></div>
-  <div class="panel table-wrap"><table class="table"><thead><tr><th>INSTALLATION</th><th>PLATFORM</th><th>STATE</th><th>DESTINATIONS</th><th>DURATION</th><th>NETWORK</th></tr></thead><tbody>
-    <tr><td>7f2a…91c4</td><td>Android</td><td><span class="state live">LIVE</span></td><td><div class="destination"><i>YouTube</i><i>Facebook</i></div></td><td>01:42:18</td><td>Wi-Fi · Good</td></tr>
-    <tr><td>82bc…1e09</td><td>Windows</td><td><span class="state live">LIVE</span></td><td><div class="destination"><i>Twitch</i></div></td><td>00:58:04</td><td>Ethernet · Excellent</td></tr>
-    <tr><td>41ae…70fd</td><td>Android</td><td><span class="state rec">RECORDING</span></td><td>—</td><td>00:22:51</td><td>Wi-Fi · Fair</td></tr>
-    <tr><td>109d…c28a</td><td>iOS</td><td><span class="state idle">STUDIO</span></td><td>—</td><td>00:08:12</td><td>Cellular · Good</td></tr>
-  </tbody></table></div>
-
-  <div class="section-title"><h2>Audience footprint</h2><span>Network country + app language</span></div>
-  <div class="geo">
-    <div class="panel"><div class="panel-head"><h3>Top network countries</h3><span>REAL WORLD MAP · VPN MAY AFFECT COUNTRY</span></div><div class="world"><div id="worldMap" aria-label="KyroS global installations map"></div><div class="map-overlay"><b>Connections by population bracket</b><div class="map-legend" id="mapLegend"></div><div class="map-note">All map dots use the same compact size. Higher connection populations are shown only by stronger color intensity.</div></div></div></div>
-    <div class="panel"><div class="panel-head"><h3>Top countries</h3><span>INSTALLATIONS</span></div><div class="list">
-      <div class="list-row"><div>Kenya<small>8,412 installations</small><div class="bar"><i style="--w:82%"></i></div></div><b>17.3%</b></div>
-      <div class="list-row"><div>United States<small>7,305 installations</small><div class="bar"><i style="--w:71%"></i></div></div><b>15.0%</b></div>
-      <div class="list-row"><div>United Kingdom<small>4,116 installations</small><div class="bar"><i style="--w:40%"></i></div></div><b>8.4%</b></div>
-      <div class="list-row"><div>France<small>3,282 installations</small><div class="bar"><i style="--w:32%"></i></div></div><b>6.7%</b></div>
-      <div class="list-row"><div>Spain<small>2,704 installations</small><div class="bar"><i style="--w:26%"></i></div></div><b>5.5%</b></div>
-    </div></div>
+  <div class="section-title"><h2>Global activity</h2><span>COUNTRY-LEVEL NETWORK LOCATION · NOT PRECISE GPS</span></div>
+  <div class="grid2">
+    <div class="panel"><div class="panel-head"><h3>Active devices map</h3><span id="mapCaption">Loading real device counts…</span></div><div class="world"><div id="worldMap"></div><div class="map-note">Markers and intensity are generated from current database counts by network country. No device GPS coordinates are collected here.</div></div></div>
+    <div class="panel"><div class="panel-head"><h3>Countries</h3><span>ACTIVE NOW / TOTAL</span></div><div class="list" id="countryList"></div></div>
   </div>
 
-  <div class="section-title"><h2>Production features</h2><span>Current active sessions</span></div>
-  <div class="usage">
-    <div><b>186</b><small>Screen Share active</small></div><div><b>94</b><small>Remote Camera active</small></div><div><b>213</b><small>Local recording</small></div><div><b>428</b><small>Live destinations</small></div>
-  </div>
+  <div class="section-title"><h2>Current devices</h2><span>CLICK A ROW FOR RAW DEVICE INFORMATION</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Installation</th><th>Device</th><th>Platform</th><th>State</th><th>Country</th><th>Network</th><th>Battery</th><th>Last seen</th></tr></thead><tbody id="activeTable"></tbody></table></div>
 
-  <div class="section-title"><h2>Recent activity</h2><span>Preview event stream</span></div>
-  <div class="panel activity">
-    <div class="activity-row"><i style="background:#45e49a"></i><div><b>Broadcast started</b><p>Android · YouTube + Facebook · Wi-Fi</p></div><time>12 sec ago</time></div>
-    <div class="activity-row"><i></i><div><b>New installation</b><p>Android · Kenya · KyroS 1.0.0</p></div><time>41 sec ago</time></div>
-    <div class="activity-row"><i style="background:#40d9ff"></i><div><b>Remote Camera active</b><p>Android · LAN camera source</p></div><time>2 min ago</time></div>
-    <div class="activity-row"><i style="background:#ff5965"></i><div><b>Broadcast ended</b><p>Windows · Twitch · Duration 01:18:42</p></div><time>4 min ago</time></div>
-  </div>
+  <div class="section-title"><h2>Recent server activity</h2><span>DATABASE EVENTS</span></div>
+  <div class="panel"><div class="activity" id="activityList"></div></div>
 </section>
 
-<section class="page" id="devices"><div class="section-title"><h2>Installations</h2><span>Device intelligence</span></div><div class="cards"><div class="card"><label>Total</label><strong>48,721</strong><small>Unique installation UUIDs</small></div><div class="card"><label>Active today</label><strong>8,940</strong><small class="up">18.3% of installs</small></div><div class="card"><label>Android</label><strong>30.2K</strong><small>Largest platform</small></div><div class="card"><label>Latest build</label><strong>84%</strong><small>On current release</small></div></div><div class="section-title"><h2>Device models</h2><span>Top hardware</span></div><div class="panel"><div class="list"><div class="list-row"><div>Samsung Galaxy series<div class="bar"><i style="--w:72%"></i></div></div><b>31%</b></div><div class="list-row"><div>Google Pixel series<div class="bar"><i style="--w:37%"></i></div></div><b>16%</b></div><div class="list-row"><div>Windows PC<div class="bar"><i style="--w:30%"></i></div></div><b>13%</b></div><div class="list-row"><div>iPhone<div class="bar"><i style="--w:28%"></i></div></div><b>12%</b></div></div></div></section>
+<section class="page" id="devices">
+  <div class="section-title"><h2>Installations</h2><span>REAL HARDWARE + APP DISTRIBUTION</span></div>
+  <div class="cards">
+    <div class="card"><label>Total</label><strong id="dTotal">—</strong><small>Unique devices</small></div>
+    <div class="card"><label>Active now</label><strong id="dActive">—</strong><small>Heartbeat window</small></div>
+    <div class="card"><label>Active 24h</label><strong id="d24">—</strong><small>Seen today</small></div>
+    <div class="card"><label>Recording</label><strong id="dRecording">—</strong><small>Current sessions</small></div>
+    <div class="card"><label>Screen share</label><strong id="dScreen">—</strong><small>Current sessions</small></div>
+  </div>
+  <div class="section-title"><h2>Device intelligence</h2><span>TOP REPORTED VALUES</span></div>
+  <div class="grid3">
+    <div class="panel"><div class="panel-head"><h3>Models</h3><span>INSTALLATIONS</span></div><div class="list" id="modelList"></div></div>
+    <div class="panel"><div class="panel-head"><h3>App versions</h3><span>INSTALLATIONS</span></div><div class="list" id="versionList"></div></div>
+    <div class="panel"><div class="panel-head"><h3>App languages</h3><span>INSTALLATIONS</span></div><div class="list" id="languageList"></div></div>
+  </div>
+  <div class="section-title"><h2>Active installation details</h2><span>RAW JSON AVAILABLE PER ROW</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Installation</th><th>Model</th><th>App</th><th>Display</th><th>CPU / RAM</th><th>Country</th><th>Features</th><th>Last seen</th></tr></thead><tbody id="deviceTable"></tbody></table></div>
+</section>
 
-<section class="page" id="broadcasts"><div class="section-title"><h2>Broadcast intelligence</h2><span>Destinations and production time</span></div><div class="cards"><div class="card"><label>Live now</label><strong>317</strong><small class="up">428 destinations</small></div><div class="card"><label>Today</label><strong>2,804</strong><small>Broadcast sessions</small></div><div class="card"><label>Average duration</label><strong>52m</strong><small>Per broadcast</small></div><div class="card"><label>Multistream</label><strong>23%</strong><small>2+ destinations</small></div></div><div class="section-title"><h2>Destination share</h2><span>All broadcasts</span></div><div class="panel"><div class="list"><div class="list-row"><div>YouTube<div class="bar"><i style="--w:88%"></i></div></div><b>44%</b></div><div class="list-row"><div>Facebook<div class="bar"><i style="--w:62%"></i></div></div><b>31%</b></div><div class="list-row"><div>Twitch<div class="bar"><i style="--w:26%"></i></div></div><b>13%</b></div><div class="list-row"><div>TikTok<div class="bar"><i style="--w:14%"></i></div></div><b>7%</b></div><div class="list-row"><div>Other / Custom<div class="bar"><i style="--w:10%"></i></div></div><b>5%</b></div></div></div></section>
+<section class="page" id="production">
+  <div class="section-title"><h2>Live production</h2><span>ACTIVE BROADCASTS ONLY</span></div>
+  <div class="cards">
+    <div class="card"><label>Broadcasts</label><strong id="pLive">—</strong><small>Current</small></div>
+    <div class="card"><label>Destinations</label><strong id="pDest">—</strong><small>Total outputs</small></div>
+    <div class="card"><label>Recording</label><strong id="pRec">—</strong><small>Active sessions</small></div>
+    <div class="card"><label>Screen share</label><strong id="pScreen">—</strong><small>Active sessions</small></div>
+    <div class="card"><label>Remote feature</label><strong id="pRemote">—</strong><small>Sessions reporting remote camera</small></div>
+  </div>
+  <div class="section-title"><h2>Destinations</h2><span>LIVE OUTPUTS</span></div>
+  <div class="grid2"><div class="panel"><div class="list" id="destinationList"></div></div><div class="panel"><div class="notice">Broadcast rows disappear automatically when telemetry marks them ended or they stop heartbeating inside the active timeout.</div></div></div>
+  <div class="section-title"><h2>Live sessions</h2></div>
+  <div class="table-wrap"><table><thead><tr><th>Broadcast</th><th>Device</th><th>Platform</th><th>Destinations</th><th>Country</th><th>Network</th><th>Started</th><th>Last seen</th></tr></thead><tbody id="liveTable"></tbody></table></div>
+</section>
 
-<section class="page" id="usage"><div class="section-title"><h2>Feature usage</h2><span>Production capability adoption</span></div><div class="usage"><div><b>71%</b><small>Scenes</small></div><div><b>54%</b><small>Local recording</small></div><div><b>39%</b><small>Screen Share</small></div><div><b>28%</b><small>Remote Camera</small></div><div><b>66%</b><small>Media sources</small></div><div><b>44%</b><small>Text / graphics</small></div><div><b>19%</b><small>Web sources</small></div><div><b>12%</b><small>Chroma key</small></div></div></section>
-
-<section class="page" id="network"><div class="section-title"><h2>Network health</h2><span>Aggregate, privacy-conscious telemetry</span></div><div class="cards"><div class="card"><label>Excellent / Good</label><strong>81%</strong><small class="up">Healthy sessions</small></div><div class="card"><label>Reconnects</label><strong>1.7%</strong><small>Broadcast sessions</small></div><div class="card"><label>Wi-Fi</label><strong>68%</strong><small>Active transport</small></div><div class="card"><label>Cellular</label><strong>24%</strong><small>Active transport</small></div></div><div class="section-title"><h2>Health distribution</h2></div><div class="panel"><div class="list"><div class="list-row"><div>Excellent<div class="bar"><i style="--w:72%"></i></div></div><b>42%</b></div><div class="list-row"><div>Good<div class="bar"><i style="--w:66%"></i></div></div><b>39%</b></div><div class="list-row"><div>Fair<div class="bar"><i style="--w:24%"></i></div></div><b>14%</b></div><div class="list-row"><div>Poor / Critical<div class="bar"><i style="--w:9%"></i></div></div><b>5%</b></div></div></div></section>
-
+<section class="page" id="remote">
+  <div class="section-title"><h2>Internet Remote Camera</h2><span>WEBRTC SESSION TELEMETRY</span></div>
+  <div class="cards">
+    <div class="card"><label>Connected now</label><strong id="rConnected">—</strong><small class="up">Active WebRTC links</small></div>
+    <div class="card"><label>Waiting / joined</label><strong id="rWaiting">—</strong><small>Pairing lifecycle</small></div>
+    <div class="card"><label>TURN relayed</label><strong id="rRelayed">—</strong><small>Sessions using relay</small></div>
+    <div class="card"><label>WS rooms</label><strong id="rWs">—</strong><small>In-memory signaling rooms</small></div>
+    <div class="card"><label>Transport</label><strong>WebRTC</strong><small>WebSocket signaling only</small></div>
+  </div>
+  <div class="section-title"><h2>Recent pairings</h2><span>CAMERA CREATES CODE · STUDIO JOINS</span></div>
+  <div class="table-wrap"><table><thead><tr><th>Session</th><th>Status</th><th>Camera</th><th>Studio</th><th>Path</th><th>RTT</th><th>Loss</th><th>Last seen</th></tr></thead><tbody id="remoteTable"></tbody></table></div>
+</section>
 
 <section class="page" id="issues">
-  <div class="section-title"><h2>Reported issues</h2><span>Bug / issue reports received from KyroS apps</span></div>
-  <div class="issue-summary">
-    <div class="mini"><label>Total reports</label><strong id="issueTotal">0</strong></div>
-    <div class="mini"><label>Needs attention</label><strong class="open-count" id="issueOpen">0</strong></div>
-    <div class="mini"><label>Addressed</label><strong class="done-count" id="issueAddressed">0</strong></div>
+  <div class="section-title"><h2>Issue reports</h2><span>REAL REPORTS FROM KYROS</span></div>
+  <div class="cards">
+    <div class="card"><label>Total</label><strong id="iTotal">—</strong><small>All reports</small></div>
+    <div class="card"><label>Open</label><strong id="iOpen">—</strong><small class="warn">Needs attention</small></div>
+    <div class="card"><label>Addressed</label><strong id="iAddressed">—</strong><small class="up">Resolved</small></div>
+    <div class="card"><label>Last 24h</label><strong id="i24">—</strong><small>New reports</small></div>
   </div>
-  <div class="panel">
-    <div class="issue-toolbar">
-      <input id="issueSearch" type="search" placeholder="Search title, description, email or device">
-      <select id="issueStatus" aria-label="Issue status">
-        <option value="open">Needs attention</option>
-        <option value="all">All reports</option>
-        <option value="addressed">Addressed</option>
-      </select>
-      <button id="issuesRefresh" type="button">↻ Refresh</button>
-    </div>
-    <div id="issuesError"></div>
-    <div class="issue-list" id="issueList"><div class="issue-loading">Loading issue reports…</div></div>
-  </div>
+  <div class="section-title"><h2>Reports</h2></div>
+  <div class="toolbar"><select id="issueStatus"><option value="open">Open</option><option value="all">All</option><option value="addressed">Addressed</option></select><input id="issueSearch" placeholder="Search title, description, email or device"><button class="btn" id="issueSearchBtn">Search</button></div>
+  <div id="issueList"></div>
 </section>
 
-<section class="page" id="releases"><div class="section-title"><h2>Release distribution</h2><span>Preview management surface</span></div><div class="cards"><div class="card"><label>Android</label><strong>1.0.0</strong><small class="up">AVAILABLE</small></div><div class="card"><label>iOS</label><strong>1.0.0</strong><small>Release package</small></div><div class="card"><label>Windows</label><strong>1.0.0</strong><small>Release package</small></div><div class="card"><label>Latest adoption</label><strong>84%</strong><small>All active installs</small></div></div><div class="section-title"><h2>Release controls</h2></div><div class="panel placeholder"><div><b>Release management</b><p>This surface is ready for future mother-server controls: current/minimum build, forced updates, release notes, announcements and package publishing. It is intentionally UI-only for now.</p></div></div></section>
+  </div>
+</main>
 </div>
-</div>
-</div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="">
 
-// ============================================================
-// Issue reports admin
-// ============================================================
-const issueList=document.getElementById("issueList");
-const issueStatus=document.getElementById("issueStatus");
-const issueSearch=document.getElementById("issueSearch");
-const issueError=document.getElementById("issuesError");
-const issuesNavCount=document.getElementById("issuesNavCount");
-let issueSearchTimer=null;
+<aside class="drawer" id="deviceDrawer"><div class="drawer-head"><h3>Installation details</h3><button class="close" id="closeDrawer">×</button></div><div id="drawerContent"></div></aside>
 
-function esc(v){return String(v??"").replace(/[&<>'"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));}
-function issueDate(v){if(!v)return "Unknown time";const d=new Date(v);return Number.isNaN(d.getTime())?"Unknown time":d.toLocaleString();}
-function shortId(v){if(!v)return "—";const s=String(v);return s.length>14?`${s.slice(0,8)}…${s.slice(-4)}`:s;}
-
-function renderIssues(data){
-  const counts=data.counts||{};
-  document.getElementById("issueTotal").textContent=Number(counts.total||0).toLocaleString();
-  document.getElementById("issueOpen").textContent=Number(counts.open||0).toLocaleString();
-  document.getElementById("issueAddressed").textContent=Number(counts.addressed||0).toLocaleString();
-  issuesNavCount.textContent=Number(counts.open||0)>99?"99+":String(counts.open||0);
-  issuesNavCount.style.display=Number(counts.open||0)>0?"inline-grid":"none";
-
-  const rows=Array.isArray(data.issues)?data.issues:[];
-  if(!rows.length){issueList.innerHTML='<div class="issues-empty">No issue reports match this view.</div>';return;}
-  issueList.innerHTML=rows.map(r=>{
-    const addressed=!!r.addressed;
-    const meta=[
-      r.platform&&`Platform: ${esc(r.platform)}`,
-      r.device_model&&`Device: ${esc(r.device_model)}`,
-      r.app_version&&`Version: ${esc(r.app_version)}${r.app_build?` (${esc(r.app_build)})`:""}`,
-      r.last_network_country&&`Country: ${esc(r.last_network_country)}`,
-      r.email&&`Email: ${esc(r.email)}`,
-      r.installation_id&&`Install: ${esc(shortId(r.installation_id))}`
-    ].filter(Boolean).map(x=>`<span>${x}</span>`).join("");
-    const shots=Array.isArray(r.screenshots)&&r.screenshots.length?`<span>${r.screenshots.length} screenshot reference${r.screenshots.length===1?"":"s"}</span>`:"";
-    return `<article class="issue-item ${addressed?"addressed":""}" data-issue-id="${esc(r.issue_id)}">
-      <div class="issue-head" tabindex="0" role="button" aria-expanded="false">
-        <i class="issue-status-dot"></i>
-        <div class="issue-title"><b>${esc(r.title)}</b><small>${issueDate(r.created_at)} · ${esc(shortId(r.issue_id))}</small></div>
-        <span class="issue-state">${addressed?"ADDRESSED":"NEEDS ATTENTION"}</span>
-      </div>
-      <div class="issue-body">
-        <div class="issue-description">${esc(r.description)}</div>
-        <div class="issue-meta">${meta}${shots}</div>
-        ${addressed&&r.addressed_at?`<div class="issue-meta"><span>Addressed: ${issueDate(r.addressed_at)}</span></div>`:""}
-        <div class="issue-actions"><button class="${addressed?"reopen":"primary"}" type="button" data-action="toggle">${addressed?"Mark not addressed":"Mark addressed"}</button></div>
-      </div>
-    </article>`;
-  }).join("");
-
-  issueList.querySelectorAll(".issue-head").forEach(head=>{
-    const toggle=()=>{const item=head.closest(".issue-item");const expanded=item.classList.toggle("expanded");head.setAttribute("aria-expanded",String(expanded));};
-    head.addEventListener("click",toggle);
-    head.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}});
-  });
-  issueList.querySelectorAll('[data-action="toggle"]').forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation();
-    const item=btn.closest(".issue-item");
-    const id=item.dataset.issueId;
-    const next=!item.classList.contains("addressed");
-    btn.disabled=true;btn.textContent="Saving…";
-    try{
-      const r=await fetch(`/admin-issues/${encodeURIComponent(id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({addressed:next})});
-      const body=await r.json().catch(()=>({}));
-      if(!r.ok||!body.ok)throw new Error(body.error||"Unable to update issue");
-      await loadIssues();
-    }catch(err){issueError.innerHTML=`<div class="issues-error">${esc(err.message||"Unable to update issue")}</div>`;btn.disabled=false;btn.textContent=next?"Mark addressed":"Mark not addressed";}
-  }));
-}
-
-async function loadIssues(){
-  if(!issueList)return;
-  issueError.innerHTML="";
-  issueList.innerHTML='<div class="issue-loading">Loading issue reports…</div>';
-  const params=new URLSearchParams({status:issueStatus.value,limit:"150"});
-  const q=issueSearch.value.trim();if(q)params.set("q",q);
-  try{
-    const r=await fetch(`/admin-issues?${params.toString()}`,{headers:{"Accept":"application/json"}});
-    const body=await r.json().catch(()=>({}));
-    if(!r.ok||!body.ok)throw new Error(body.error||"Unable to load issue reports");
-    renderIssues(body);
-  }catch(err){issueList.innerHTML='<div class="issues-empty">Issue reports could not be loaded.</div>';issueError.innerHTML=`<div class="issues-error">${esc(err.message||"Unable to load issue reports")}</div>`;}
-}
-issueStatus.addEventListener("change",loadIssues);
-document.getElementById("issuesRefresh").addEventListener("click",loadIssues);
-issueSearch.addEventListener("input",()=>{clearTimeout(issueSearchTimer);issueSearchTimer=setTimeout(loadIssues,300);});
-
-// Load the unresolved badge quietly at startup.
-fetch("/admin-issues?status=open&limit=1").then(r=>r.json()).then(data=>{if(data&&data.ok){const c=Number(data.counts?.open||0);issuesNavCount.textContent=c>99?"99+":String(c);issuesNavCount.style.display=c>0?"inline-grid":"none";}}).catch(()=>{});
-
-// When the Issues navigation page opens, pull fresh reports immediately.
-buttons.forEach(b=>{if(b.dataset.page==="issues")b.addEventListener("click",()=>setTimeout(loadIssues,0));});
-
-</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const previewActivity=[
-  {country:"Kenya",city:"Nairobi",lat:-1.2864,lng:36.8172,count:8412,active:327,broadcasts:94},
-  {country:"Kenya",city:"Mombasa",lat:-4.0435,lng:39.6682,count:1380,active:63,broadcasts:19},
-  {country:"United States",city:"New York",lat:40.7128,lng:-74.0060,count:7305,active:244,broadcasts:81},
-  {country:"United States",city:"Los Angeles",lat:34.0522,lng:-118.2437,count:2850,active:97,broadcasts:33},
-  {country:"United Kingdom",city:"London",lat:51.5072,lng:-0.1276,count:4116,active:139,broadcasts:42},
-  {country:"France",city:"Paris",lat:48.8566,lng:2.3522,count:3282,active:108,broadcasts:31},
-  {country:"Spain",city:"Madrid",lat:40.4168,lng:-3.7038,count:2704,active:87,broadcasts:24},
-  {country:"Nigeria",city:"Lagos",lat:6.5244,lng:3.3792,count:2381,active:92,broadcasts:22},
-  {country:"India",city:"Mumbai",lat:19.0760,lng:72.8777,count:2014,active:76,broadcasts:18},
-  {country:"Brazil",city:"São Paulo",lat:-23.5505,lng:-46.6333,count:1982,active:69,broadcasts:17},
-  {country:"Indonesia",city:"Jakarta",lat:-6.2088,lng:106.8456,count:1604,active:58,broadcasts:14},
-  {country:"Australia",city:"Sydney",lat:-33.8688,lng:151.2093,count:980,active:31,broadcasts:8},
-  {country:"Japan",city:"Tokyo",lat:35.6762,lng:139.6503,count:720,active:25,broadcasts:7}
-];
+const $=id=>document.getElementById(id);
+const fmt=n=>Number(n||0).toLocaleString();
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const shortId=s=>s?String(s).slice(0,8)+'…'+String(s).slice(-4):'—';
+const ago=v=>{if(!v)return'—';const d=Math.max(0,Date.now()-new Date(v).getTime()),s=Math.floor(d/1000);if(s<60)return s+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';if(s<86400)return Math.floor(s/3600)+'h ago';return Math.floor(s/86400)+'d ago'};
+const dur=v=>{if(!v)return'—';const s=Math.max(0,Math.floor((Date.now()-new Date(v).getTime())/1000));const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h?`${h}h ${m}m`:`${m}m`};
+const pct=(v,total)=>total?Math.max(2,Math.round(Number(v||0)*100/total)):0;
+const statusClass=s=>s==='connected'||s==='live'?'live':s==='waiting'||s==='joined'?'rec':s==='cancelled'||s==='expired'?'bad':'idle';
+let dashboard=null, map=null, geoLayer=null, markerLayer=null, countryFeatures=new Map(), refreshBusy=false, issuesBusy=false;
 
-function activityStyle(count){
-  // All map markers stay at the smallest compact size.
-  // Population is communicated only by color intensity.
-  const radius=3;
-  if(count<=10) return {radius,color:"#353951",label:"1–10"};
-  if(count<=50) return {radius,color:"#444a70",label:"11–50"};
-  if(count<=250) return {radius,color:"#555e96",label:"51–250"};
-  if(count<=1000) return {radius,color:"#6672bd",label:"251–1K"};
-  if(count<=5000) return {radius,color:"#787fe0",label:"1K–5K"};
-  if(count<=20000) return {radius,color:"#8f86f4",label:"5K–20K"};
-  return {radius,color:"#ad79ff",label:"20K+"};
-}
-const worldMap=L.map("worldMap",{
-  worldCopyJump:true,minZoom:1,maxZoom:8,zoomControl:true,attributionControl:false,
-  touchZoom:true,scrollWheelZoom:true,doubleClickZoom:true,boxZoom:true,keyboard:true,dragging:true,
-  zoomSnap:0.25,zoomDelta:0.5,maxBounds:[[-88,-190],[88,190]],maxBoundsViscosity:.8
-}).setView([18,10],1.45);
+function setText(id,v){const e=$(id);if(e)e.textContent=v}
+function listHtml(rows,label,value,total){if(!rows?.length)return'<div class="empty">No data yet.</div>';return rows.map(r=>`<div class="list-row"><div>${esc(label(r))}<small>${esc(value(r))}</small><div class="bar"><i style="--w:${pct(Number(r.installations??r.live??0),total)}%"></i></div></div><b>${fmt(r.installations??r.live??0)}</b></div>`).join('')}
 
-// No street tiles: the ocean is simply the map background and countries are vector polygons.
-const countriesUrl="https://cdn.jsdelivr.net/gh/johan/world.geo.json@master/countries.geo.json";
-fetch(countriesUrl)
-  .then(r=>{if(!r.ok) throw new Error("Country map unavailable");return r.json();})
-  .then(geo=>{
-    L.geoJSON(geo,{
-      style:{fillColor:"#141d28",fillOpacity:1,color:"#3b4b5f",weight:.7,opacity:.9,className:"country-shape"},
-      onEachFeature:(feature,layer)=>{
-        const n=(feature.properties&&feature.properties.name)||"Country";
-        layer.bindTooltip(n,{sticky:true,direction:"top",opacity:.9});
-        layer.on({mouseover:e=>e.target.setStyle({fillColor:"#1b2734",color:"#53677f",weight:1}),mouseout:e=>e.target.setStyle({fillColor:"#141d28",color:"#3b4b5f",weight:.7})});
-      }
-    }).addTo(worldMap).bringToBack();
-  })
-  .catch(()=>{
-    // Keep the map usable even if the boundary file cannot load.
-    document.getElementById("worldMap").style.background="#05080d";
-  });
-
-const legendBrackets=[5,30,150,700,3000,10000,50000];
-document.getElementById("mapLegend").innerHTML=legendBrackets.map(v=>{
-  const s=activityStyle(v),d=6;
-  return `<span><i style="width:${d}px;height:${d}px;background:${s.color};color:${s.color}"></i>${s.label}</span>`;
-}).join("");
-
-const cityLabels=[];
-previewActivity.forEach(c=>{
-  const s=activityStyle(c.count);
-  const marker=L.circleMarker([c.lat,c.lng],{
-    radius:s.radius,
-    stroke:false,
-    weight:0,
-    fillColor:s.color,
-    fillOpacity:0.96,
-    className:"activity-dot"
-  }).addTo(worldMap);
-  marker.bindPopup(`<div class="map-popup"><b>${c.city}, ${c.country}</b><br><small>${c.count.toLocaleString()} connections/installations<br>${c.active.toLocaleString()} active now<br>${c.broadcasts.toLocaleString()} broadcasts<br>Population bracket: ${s.label}</small></div>`);
-  marker.bindTooltip(c.city,{permanent:false,direction:"right",offset:[8,0],className:"city-label"});
-  cityLabels.push(marker);
-});
-
-function updateCityLabels(){
-  const show=worldMap.getZoom()>=3.25;
-  cityLabels.forEach(m=>{
-    if(show&&!m.isTooltipOpen()) m.openTooltip();
-    if(!show&&m.isTooltipOpen()) m.closeTooltip();
-  });
-}
-worldMap.on("zoomend",updateCityLabels);
-updateCityLabels();
-setTimeout(()=>worldMap.invalidateSize(),180);
-const buttons=[...document.querySelectorAll(".nav button")], pages=[...document.querySelectorAll(".page")], title=document.getElementById("pageTitle"), side=document.getElementById("side");
-buttons.forEach(b=>b.onclick=()=>{buttons.forEach(x=>x.classList.remove("active"));b.classList.add("active");pages.forEach(p=>p.classList.toggle("active",p.id===b.dataset.page));title.textContent=b.textContent.trim().replace(/^[⌂◫●≋⌁↓!]\s*/,"");side.classList.remove("open");window.scrollTo({top:0,behavior:"smooth"});if(b.dataset.page==="overview")setTimeout(()=>worldMap.invalidateSize(),120)});
-document.getElementById("menu").onclick=()=>side.classList.toggle("open");
-document.getElementById("refresh").onclick=e=>{const b=e.currentTarget,old=b.textContent;b.textContent="↻ Refreshed";setTimeout(()=>b.textContent=old,900)};
-window.addEventListener("resize",()=>worldMap.invalidateSize());
-
-
-// ============================================================
-// Issue reports admin
-// ============================================================
-const issueList=document.getElementById("issueList");
-const issueStatus=document.getElementById("issueStatus");
-const issueSearch=document.getElementById("issueSearch");
-const issueError=document.getElementById("issuesError");
-const issuesNavCount=document.getElementById("issuesNavCount");
-let issueSearchTimer=null;
-
-function esc(v){return String(v??"").replace(/[&<>'"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[ch]));}
-function issueDate(v){if(!v)return "Unknown time";const d=new Date(v);return Number.isNaN(d.getTime())?"Unknown time":d.toLocaleString();}
-function shortId(v){if(!v)return "—";const s=String(v);return s.length>14?`${s.slice(0,8)}…${s.slice(-4)}`:s;}
-
-function renderIssues(data){
-  const counts=data.counts||{};
-  document.getElementById("issueTotal").textContent=Number(counts.total||0).toLocaleString();
-  document.getElementById("issueOpen").textContent=Number(counts.open||0).toLocaleString();
-  document.getElementById("issueAddressed").textContent=Number(counts.addressed||0).toLocaleString();
-  issuesNavCount.textContent=Number(counts.open||0)>99?"99+":String(counts.open||0);
-  issuesNavCount.style.display=Number(counts.open||0)>0?"inline-grid":"none";
-
-  const rows=Array.isArray(data.issues)?data.issues:[];
-  if(!rows.length){issueList.innerHTML='<div class="issues-empty">No issue reports match this view.</div>';return;}
-  issueList.innerHTML=rows.map(r=>{
-    const addressed=!!r.addressed;
-    const meta=[
-      r.platform&&`Platform: ${esc(r.platform)}`,
-      r.device_model&&`Device: ${esc(r.device_model)}`,
-      r.app_version&&`Version: ${esc(r.app_version)}${r.app_build?` (${esc(r.app_build)})`:""}`,
-      r.last_network_country&&`Country: ${esc(r.last_network_country)}`,
-      r.email&&`Email: ${esc(r.email)}`,
-      r.installation_id&&`Install: ${esc(shortId(r.installation_id))}`
-    ].filter(Boolean).map(x=>`<span>${x}</span>`).join("");
-    const shots=Array.isArray(r.screenshots)&&r.screenshots.length?`<span>${r.screenshots.length} screenshot reference${r.screenshots.length===1?"":"s"}</span>`:"";
-    return `<article class="issue-item ${addressed?"addressed":""}" data-issue-id="${esc(r.issue_id)}">
-      <div class="issue-head" tabindex="0" role="button" aria-expanded="false">
-        <i class="issue-status-dot"></i>
-        <div class="issue-title"><b>${esc(r.title)}</b><small>${issueDate(r.created_at)} · ${esc(shortId(r.issue_id))}</small></div>
-        <span class="issue-state">${addressed?"ADDRESSED":"NEEDS ATTENTION"}</span>
-      </div>
-      <div class="issue-body">
-        <div class="issue-description">${esc(r.description)}</div>
-        <div class="issue-meta">${meta}${shots}</div>
-        ${addressed&&r.addressed_at?`<div class="issue-meta"><span>Addressed: ${issueDate(r.addressed_at)}</span></div>`:""}
-        <div class="issue-actions"><button class="${addressed?"reopen":"primary"}" type="button" data-action="toggle">${addressed?"Mark not addressed":"Mark addressed"}</button></div>
-      </div>
-    </article>`;
-  }).join("");
-
-  issueList.querySelectorAll(".issue-head").forEach(head=>{
-    const toggle=()=>{const item=head.closest(".issue-item");const expanded=item.classList.toggle("expanded");head.setAttribute("aria-expanded",String(expanded));};
-    head.addEventListener("click",toggle);
-    head.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}});
-  });
-  issueList.querySelectorAll('[data-action="toggle"]').forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation();
-    const item=btn.closest(".issue-item");
-    const id=item.dataset.issueId;
-    const next=!item.classList.contains("addressed");
-    btn.disabled=true;btn.textContent="Saving…";
-    try{
-      const r=await fetch(`/admin-issues/${encodeURIComponent(id)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({addressed:next})});
-      const body=await r.json().catch(()=>({}));
-      if(!r.ok||!body.ok)throw new Error(body.error||"Unable to update issue");
-      await loadIssues();
-    }catch(err){issueError.innerHTML=`<div class="issues-error">${esc(err.message||"Unable to update issue")}</div>`;btn.disabled=false;btn.textContent=next?"Mark addressed":"Mark not addressed";}
-  }));
+function renderSummary(d){const s=d.summary||{};
+  [['kTotal',s.total_installations],['kActive',s.active_now],['kLive',s.live_broadcasts],['kRemote',s.remote_links_connected],['kIssues',s.open_issues],['dTotal',s.total_installations],['dActive',s.active_now],['d24',s.active_24h],['dRecording',s.recording_now],['dScreen',s.screen_sharing_now],['pLive',s.live_broadcasts],['pDest',s.live_destinations],['pRec',s.recording_now],['pScreen',s.screen_sharing_now],['pRemote',s.remote_camera_feature_now],['iTotal',d.issues?.total],['iOpen',d.issues?.open],['iAddressed',d.issues?.addressed],['i24',d.issues?.created_24h]].forEach(([id,v])=>setText(id,fmt(v)));
+  setText('kActive24',`${fmt(s.active_24h)} active in 24h`);setText('kDestinations',`${fmt(s.live_destinations)} destinations active`);
+  const b=$('issueBadge');const open=Number(d.issues?.open||0);b.textContent=open>99?'99+':open;b.style.display=open?'inline-grid':'none';
 }
 
-async function loadIssues(){
-  if(!issueList)return;
-  issueError.innerHTML="";
-  issueList.innerHTML='<div class="issue-loading">Loading issue reports…</div>';
-  const params=new URLSearchParams({status:issueStatus.value,limit:"150"});
-  const q=issueSearch.value.trim();if(q)params.set("q",q);
-  try{
-    const r=await fetch(`/admin-issues?${params.toString()}`,{headers:{"Accept":"application/json"}});
-    const body=await r.json().catch(()=>({}));
-    if(!r.ok||!body.ok)throw new Error(body.error||"Unable to load issue reports");
-    renderIssues(body);
-  }catch(err){issueList.innerHTML='<div class="issues-empty">Issue reports could not be loaded.</div>';issueError.innerHTML=`<div class="issues-error">${esc(err.message||"Unable to load issue reports")}</div>`;}
+function renderChart(rows){const el=$('activityChart');if(!rows?.length){el.innerHTML='<div class="empty">No session activity.</div>';return}const max=Math.max(1,...rows.map(x=>Number(x.sessions||0)));el.innerHTML=rows.map(r=>{const h=Math.max(3,Number(r.sessions||0)/max*100);const t=new Date(r.hour).toLocaleTimeString([],{hour:'2-digit'});return`<div class="barcol" style="height:${h}%"><i>${esc(t)} · ${fmt(r.sessions)}</i></div>`}).join('')}
+function renderLists(d){const ins=d.installations||{};const maxPlatforms=Math.max(1,...(ins.platforms||[]).map(x=>Number(x.installations||0)));$('platformList').innerHTML=listHtml(ins.platforms,r=>(r.platform||'unknown').toUpperCase(),r=>`${fmt(r.seen_24h)} seen in 24h`,maxPlatforms);
+  const maxModels=Math.max(1,...(ins.deviceModels||[]).map(x=>Number(x.installations||0)));$('modelList').innerHTML=listHtml(ins.deviceModels,r=>`${r.manufacturer||''} ${r.model||''}`.trim(),r=>'installations',maxModels);
+  const maxVersions=Math.max(1,...(ins.versions||[]).map(x=>Number(x.installations||0)));$('versionList').innerHTML=listHtml(ins.versions,r=>`v${r.app_version} (${r.app_build})`,r=>'installations',maxVersions);
+  const maxLang=Math.max(1,...(ins.languages||[]).map(x=>Number(x.installations||0)));$('languageList').innerHTML=listHtml(ins.languages,r=>r.language||'unknown',r=>'installations',maxLang);
+  const countries=(ins.countries||[]).filter(x=>x.country&&x.country!=='unknown').slice(0,14),maxCountries=Math.max(1,...countries.map(x=>Number(x.installations||0)));$('countryList').innerHTML=countries.length?countries.map(r=>`<div class="list-row"><div>${esc(r.country)}<small>${fmt(r.active_now)} active now · ${fmt(r.live_broadcasts)} live broadcasts</small><div class="bar"><i style="--w:${pct(r.installations,maxCountries)}%"></i></div></div><b>${fmt(r.installations)}</b></div>`).join(''):'<div class="empty">No country data yet.</div>';
+  const dest=d.destinations||[],maxDest=Math.max(1,...dest.map(x=>Number(x.live||0)));$('destinationList').innerHTML=listHtml(dest,r=>(r.destination||'unknown').toUpperCase(),r=>'live outputs',maxDest);
 }
-issueStatus.addEventListener("change",loadIssues);
-document.getElementById("issuesRefresh").addEventListener("click",loadIssues);
-issueSearch.addEventListener("input",()=>{clearTimeout(issueSearchTimer);issueSearchTimer=setTimeout(loadIssues,300);});
 
-// Load the unresolved badge quietly at startup.
-fetch("/admin-issues?status=open&limit=1").then(r=>r.json()).then(data=>{if(data&&data.ok){const c=Number(data.counts?.open||0);issuesNavCount.textContent=c>99?"99+":String(c);issuesNavCount.style.display=c>0?"inline-grid":"none";}}).catch(()=>{});
+function deviceState(r){if(r.is_broadcasting)return['LIVE','live'];if(r.is_recording)return['RECORDING','rec'];if(r.is_foreground)return['STUDIO','studio'];return['IDLE','idle']}
+function renderActive(d){const rows=d.activeDevices||[];
+  const html=rows.length?rows.map(r=>{const [st,cl]=deviceState(r);return`<tr class="clickable" data-id="${esc(r.installation_id)}"><td>${esc(shortId(r.installation_id))}</td><td>${esc(r.model||r.manufacturer||'Unknown')}</td><td>${esc((r.platform||'unknown').toUpperCase())}</td><td><span class="state ${cl}">${st}</span></td><td>${esc(r.last_network_country||'—')}</td><td>${esc(r.network_transport||'—')}</td><td>${r.battery_percent==null?'—':esc(r.battery_percent+'%')}${r.charging?' ⚡':''}</td><td>${esc(ago(r.last_seen_at))}</td></tr>`}).join(''):'<tr><td colspan="8"><div class="empty">No active devices in the heartbeat window.</div></td></tr>';
+  $('activeTable').innerHTML=html;
+  $('deviceTable').innerHTML=rows.length?rows.map(r=>`<tr class="clickable" data-id="${esc(r.installation_id)}"><td>${esc(shortId(r.installation_id))}</td><td>${esc([r.manufacturer,r.model].filter(Boolean).join(' ')||'Unknown')}</td><td>${esc(r.app_version||'—')} · ${esc(r.app_build||'—')}</td><td>${r.screen_width&&r.screen_height?esc(`${r.screen_width}×${r.screen_height}`):'—'}${r.screen_refresh_rate?` · ${esc(r.screen_refresh_rate)}Hz`:''}</td><td>${esc(r.cpu_cores??'—')} cores · ${r.total_memory_mb?esc(Math.round(r.total_memory_mb/1024)+' GB'):'—'}</td><td>${esc(r.last_network_country||'—')}</td><td>${[r.is_broadcasting?'Live':null,r.is_recording?'Rec':null,r.is_screen_sharing?'Screen':null,r.is_remote_camera?'Remote':null].filter(Boolean).join(', ')||'Studio'}</td><td>${esc(ago(r.last_seen_at))}</td></tr>`).join(''):'<tr><td colspan="8"><div class="empty">No active devices.</div></td></tr>';
+  document.querySelectorAll('tr[data-id]').forEach(tr=>tr.onclick=()=>openDevice(tr.dataset.id));
+}
+function openDevice(id){const r=dashboard?.activeDevices?.find(x=>x.installation_id===id);if(!r)return;const fields=[['Installation',r.installation_id],['Session',r.session_id],['Platform',r.platform],['Manufacturer',r.manufacturer],['Brand',r.brand],['Model',r.model],['OS',r.os_version],['OS API',r.os_api],['App',`${r.app_version||'—'} / ${r.app_build||'—'}`],['Locale',r.device_locale],['Region',r.device_region],['Timezone',r.timezone],['Display',r.screen_width&&r.screen_height?`${r.screen_width}×${r.screen_height} @ ${r.screen_refresh_rate||'—'}Hz`:'—'],['CPU cores',r.cpu_cores],['Memory MB',r.total_memory_mb],['Country',r.last_network_country],['Network',r.network_transport],['Battery',r.battery_percent==null?'—':`${r.battery_percent}%${r.charging?' charging':''}`],['First seen',r.first_seen_at?new Date(r.first_seen_at).toLocaleString():'—'],['Last seen',r.last_seen_at?new Date(r.last_seen_at).toLocaleString():'—']];$('drawerContent').innerHTML=fields.map(([k,v])=>`<div class="kv"><b>${esc(k)}</b><span>${esc(v??'—')}</span></div>`).join('')+`<div class="section-title"><h2>Raw clustered_data</h2><span>UNMODIFIED DEVICE JSON</span></div><div class="jsonbox">${esc(r.clustered_data?JSON.stringify(r.clustered_data,null,2):'No clustered_data received from this app version yet.')}</div>`;$('deviceDrawer').classList.add('open')}
+$('closeDrawer').onclick=()=>$('deviceDrawer').classList.remove('open');
 
-// When the Issues navigation page opens, pull fresh reports immediately.
-buttons.forEach(b=>{if(b.dataset.page==="issues")b.addEventListener("click",()=>setTimeout(loadIssues,0));});
+function renderLive(d){const rows=d.liveProductions||[];$('liveTable').innerHTML=rows.length?rows.map(r=>`<tr><td>${esc(shortId(r.broadcast_id))}</td><td>${esc(r.model||shortId(r.installation_id))}</td><td>${esc((r.platform||'unknown').toUpperCase())}</td><td><div class="dest">${(r.destinations||[]).map(x=>`<i>${esc(x)}</i>`).join('')||'—'}</div></td><td>${esc(r.last_network_country||'—')}</td><td>${esc(r.network_transport||'—')}</td><td>${esc(dur(r.started_at))}</td><td>${esc(ago(r.last_seen_at))}</td></tr>`).join(''):'<tr><td colspan="8"><div class="empty">No live broadcasts right now.</div></td></tr>'}
+function renderRemote(d){const rows=d.remoteCameras||[];const connected=rows.filter(r=>r.status==='connected').length,waiting=rows.filter(r=>r.status==='waiting'||r.status==='joined').length,relayed=rows.filter(r=>r.relay_used===true).length;setText('rConnected',fmt(connected));setText('rWaiting',fmt(waiting));setText('rRelayed',fmt(relayed));setText('rWs',fmt(d.server?.websocketRooms));$('remoteTable').innerHTML=rows.length?rows.map(r=>`<tr><td>${esc(shortId(r.remote_camera_id))}</td><td><span class="state ${statusClass(r.status)}">${esc((r.status||'unknown').toUpperCase())}</span></td><td>${esc(r.camera_model||r.camera_platform||shortId(r.camera_installation_id))}<small class="muted"> ${esc(r.camera_country||'')}</small></td><td>${esc(r.studio_model||r.studio_platform||shortId(r.studio_installation_id))}<small class="muted"> ${esc(r.studio_country||'')}</small></td><td>${r.relay_used?'TURN relay':esc(r.selected_candidate_type||'P2P / pending')}</td><td>${r.round_trip_ms==null?'—':esc(Math.round(r.round_trip_ms)+' ms')}</td><td>${r.packet_loss_percent==null?'—':esc(Number(r.packet_loss_percent).toFixed(2)+'%')}</td><td>${esc(ago(r.last_seen_at))}</td></tr>`).join(''):'<tr><td colspan="8"><div class="empty">No remote-camera sessions yet.</div></td></tr>'}
+function renderActivity(d){const rows=d.recentActivity||[];$('activityList').innerHTML=rows.length?rows.map(r=>{const title={installation:'New installation',broadcast:'Broadcast started',issue:'Issue reported',remote_camera:'Remote camera event'}[r.kind]||r.kind;return`<div class="activity-row"><i></i><div><b>${esc(title)}</b><p>${esc([r.platform,r.label,r.country,r.detail].filter(Boolean).join(' · '))}</p></div><time>${esc(ago(r.occurred_at))}</time></div>`}).join(''):'<div class="empty">No activity yet.</div>'}
 
+function initMap(){if(map||!window.L)return;map=L.map('worldMap',{zoomControl:true,minZoom:1,maxZoom:6,worldCopyJump:true}).setView([17,10],2);markerLayer=L.layerGroup().addTo(map);fetch('https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson').then(r=>{if(!r.ok)throw Error('geojson');return r.json()}).then(g=>{geoLayer=L.geoJSON(g,{style:{color:'#26354a',weight:.55,fillColor:'#111b28',fillOpacity:.65},onEachFeature:(f,l)=>{const p=f.properties||{};const code=String(p['ISO3166-1-Alpha-2']||p.ISO_A2||p.iso_a2||'').toUpperCase();if(code&&code!=='-99')countryFeatures.set(code,{feature:f,layer:l})}}).addTo(map);renderMap(dashboard)}).catch(()=>setText('mapCaption','Country geometry unavailable; counts below remain live.'))}
+function renderMap(d){if(!map||!markerLayer||!d)return;markerLayer.clearLayers();const rows=(d.installations?.countries||[]).filter(r=>r.country&&r.country!=='unknown'&&Number(r.active_now)>0);const max=Math.max(1,...rows.map(r=>Number(r.active_now||0)));rows.forEach(r=>{const entry=countryFeatures.get(String(r.country).toUpperCase());if(!entry)return;const center=entry.layer.getBounds().getCenter();const ratio=Number(r.active_now)/max;const color=ratio>.66?'#ff6f8a':ratio>.33?'#9b78ff':'#42d9ff';L.circleMarker(center,{radius:5+Math.min(7,Math.sqrt(Number(r.active_now))*1.3),color,weight:1,fillColor:color,fillOpacity:.7}).bindPopup(`<b>${esc(r.country)}</b><br>${fmt(r.active_now)} active now<br>${fmt(r.installations)} installations<br>${fmt(r.live_broadcasts)} live broadcasts`).addTo(markerLayer)});setText('mapCaption',`${fmt(rows.reduce((a,b)=>a+Number(b.active_now||0),0))} active devices across ${fmt(rows.length)} countries`)}
+
+function renderAll(d){dashboard=d;renderSummary(d);renderChart(d.activityTrend24h);renderLists(d);renderActive(d);renderLive(d);renderRemote(d);renderActivity(d);renderMap(d);setText('lastUpdated','Updated '+new Date(d.generatedAt||Date.now()).toLocaleTimeString());$('serverDot').className='dot online';setText('serverText','Mother server online');setText('serverMeta',`Uptime ${Math.floor(Number(d.server?.uptimeSeconds||0)/60)} min · ${d.server?.node||''}`)}
+async function refreshDashboard(silent=false){if(refreshBusy)return;refreshBusy=true;$('refreshBtn').disabled=true;$('refreshBtn').classList.add('spin');try{const r=await fetch('/admin-dashboard?activeLimit=150&recentLimit=40',{headers:{Accept:'application/json'},cache:'no-store'});if(!r.ok)throw Error('dashboard '+r.status);const d=await r.json();if(!d.ok)throw Error(d.error||'dashboard');renderAll(d)}catch(e){console.error(e);$('serverDot').className='dot offline';setText('serverText','Mother server data unavailable');if(!silent)setText('lastUpdated','Refresh failed')}finally{refreshBusy=false;$('refreshBtn').disabled=false;$('refreshBtn').classList.remove('spin')}}
+
+async function loadIssues(){if(issuesBusy)return;issuesBusy=true;const status=$('issueStatus').value,q=$('issueSearch').value.trim(),params=new URLSearchParams({status,limit:'150'});if(q)params.set('q',q);try{const r=await fetch('/admin-issues?'+params,{headers:{Accept:'application/json'},cache:'no-store'});const data=await r.json();if(!data.ok)throw Error(data.error||'issues');renderIssues(data.issues||[])}catch(e){$('issueList').innerHTML='<div class="empty">Issue reports could not be loaded.</div>'}finally{issuesBusy=false}}
+function renderIssues(rows){$('issueList').innerHTML=rows.length?rows.map(r=>`<article class="issue"><div class="issue-head"><div><h4>${esc(r.title)}</h4><div class="meta"><span>${esc((r.platform||'unknown').toUpperCase())}</span><span>${esc(r.device_model||'Unknown device')}</span><span>${esc(r.app_version||'—')} / ${esc(r.app_build||'—')}</span><span>${esc(r.last_network_country||'—')}</span><span>${esc(ago(r.created_at))}</span>${r.email?`<span>${esc(r.email)}</span>`:''}</div></div><span class="state ${r.addressed?'live':'rec'}">${r.addressed?'ADDRESSED':'OPEN'}</span></div><p>${esc(r.description)}</p>${r.clustered_data?`<details><summary class="btn">Raw device JSON</summary><div class="jsonbox">${esc(JSON.stringify(r.clustered_data,null,2))}</div></details>`:''}<div class="issue-actions"><button class="btn ${r.addressed?'':'good'}" data-issue="${esc(r.issue_id)}" data-next="${r.addressed?'false':'true'}">${r.addressed?'Reopen':'Mark addressed'}</button></div></article>`).join(''):'<div class="empty">No issue reports match this filter.</div>';document.querySelectorAll('[data-issue]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await fetch('/admin-issues/'+encodeURIComponent(b.dataset.issue),{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({addressed:b.dataset.next==='true'})});await Promise.all([loadIssues(),refreshDashboard(true)])}finally{b.disabled=false}})}
+
+const nav=[...document.querySelectorAll('.nav button[data-page]')],pages=[...document.querySelectorAll('.page')];nav.forEach(b=>b.onclick=()=>{nav.forEach(x=>x.classList.toggle('active',x===b));pages.forEach(p=>p.classList.toggle('active',p.id===b.dataset.page));setText('pageTitle',b.childNodes[1]?.textContent?.trim()||b.textContent.trim());$('side').classList.remove('open');if(b.dataset.page==='overview'&&map)setTimeout(()=>map.invalidateSize(),100);if(b.dataset.page==='issues')loadIssues()});
+$('mobileMenu').onclick=()=>$('side').classList.toggle('open');$('refreshBtn').onclick=()=>Promise.all([refreshDashboard(false),loadIssues()]);$('issueSearchBtn').onclick=loadIssues;$('issueStatus').onchange=loadIssues;$('issueSearch').addEventListener('keydown',e=>{if(e.key==='Enter')loadIssues()});
+initMap();refreshDashboard(false);loadIssues();setInterval(()=>{refreshDashboard(true);if($('issues').classList.contains('active'))loadIssues()},60000);
 </script>
-</body></html>
+</body>
+</html>
