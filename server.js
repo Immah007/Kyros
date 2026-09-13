@@ -24,12 +24,14 @@ const PORT = process.env.PORT || 3000;
    ============================================================ */
 
 const pool = new Pool({
-  host: "localhost",
+  host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
   port: 5432,
-  database: "postgres",
-  user: "postgres",
-  password: "Pass_123",
-  ssl: false,
+  database: "neondb",
+  user: "neondb_owner",
+  password: "npg_oczfV0eqx6mh",
+  ssl: {
+    rejectUnauthorized: false,
+  },
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
