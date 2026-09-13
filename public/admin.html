@@ -239,7 +239,7 @@ function initMap(){
   renderMapLegend();
 
   // Same dark vector-country presentation as the original KyroS admin map.
-  const countriesUrl='https://cdn.jsdelivr.net/gh/johan/world.geo.json@master/countries.geo.json';
+  const countriesUrl='https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson';
   fetch(countriesUrl)
     .then(r=>{if(!r.ok)throw Error('Country map unavailable');return r.json()})
     .then(g=>{
@@ -247,9 +247,12 @@ function initMap(){
         style:{fillColor:'#141d28',fillOpacity:1,color:'#3b4b5f',weight:.7,opacity:.9,className:'country-shape'},
         onEachFeature:(f,l)=>{
           const p=f.properties||{};
-          const name=String(p.name||'Country');
-          const code=String(p.iso_a2||p.ISO_A2||p['ISO3166-1-Alpha-2']||'').toUpperCase();
+          const name=String(p.ADMIN||p.NAME||p.name||'Country');
+          const code=String(p.ISO_A2||p.iso_a2||p['ISO3166-1-Alpha-2']||'').toUpperCase();
           if(code&&code!=='-99')countryFeatures.set(code,{feature:f,layer:l});
+          // Also index the country by its display name so the map works whether
+          // the backend returns ISO-2 (e.g. KE) or a country name (e.g. Kenya).
+          if(name) countryFeatures.set(name.trim().toUpperCase(),{feature:f,layer:l});
           l.bindTooltip(name,{sticky:true,direction:'top',opacity:.9});
           l.on({
             mouseover:e=>e.target.setStyle({fillColor:'#1b2734',color:'#53677f',weight:1}),
@@ -276,7 +279,7 @@ function renderMap(d){
 
   let plotted=0;
   rows.forEach(r=>{
-    const entry=countryFeatures.get(String(r.country).toUpperCase());
+    const entry=countryFeatures.get(String(r.country).trim().toUpperCase());
     if(!entry)return;
     const center=entry.layer.getBounds().getCenter();
     const population=Number(r.installations||0);
