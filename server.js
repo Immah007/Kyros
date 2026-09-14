@@ -7,15 +7,9 @@ const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const app = express();
-
 app.set("trust proxy", true);
 app.disable("x-powered-by");
-
-app.use(
-  express.json({
-    limit: "128kb",
-  })
-);
+app.use(express.json({ limit: "128kb" }));
 
 const PORT = process.env.PORT || 3000;
 
@@ -39,13 +33,17 @@ const pool = new Pool({
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const RESOURCES_DIR = path.join(__dirname, "resources");
-
 const ACTIVE_TIMEOUT_SECONDS = 180;
 
 /* ============================================================
    REMOTE CAMERA CONFIG
    ============================================================ */
 
+// The user never types any URL. The apps call this backend internally and
+// exchange only the short 6-digit connection code.
+//
+// Waiting codes expire quickly. Once a camera joins, the code is invalidated
+// and the authenticated WebRTC signaling session can remain alive longer.
 const REMOTE_CAMERA_CODE_TTL_MINUTES = Number(
   process.env.REMOTE_CAMERA_CODE_TTL_MINUTES || 10
 );
@@ -54,15 +52,106 @@ const REMOTE_CAMERA_SESSION_TTL_HOURS = Number(
   process.env.REMOTE_CAMERA_SESSION_TTL_HOURS || 12
 );
 
-const TURN_HOST = process.env.TURN_HOST || "";
-const TURN_SECRET = process.env.TURN_SECRET || "";
-const TURN_REALM = process.env.TURN_REALM || TURN_HOST || "kyros";
+// ICE / STUN / TURN
+//
+// KyroS uses Google's public STUN service by default so Internet Remote Camera
+// can attempt direct peer-to-peer connectivity immediately with no extra setup.
+//
+// Google public STUN does NOT provide a general free TURN relay.
+// TURN can therefore be added later without changing the app.
+//
+// STUN_URLS can override the defaults.
+//
+// Example:
+// STUN_URLS=stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302
 
-const STUN_HOST = process.env.STUN_HOST || TURN_HOST;
+const DEFAULT_STUN_URLS = [
+  "stun:stun.l.google.com:19302",
+  "stun:stun1.l.google.com:19302",
+  "stun:stun2.l.google.com:19302",
+  "stun:stun3.l.google.com:19302",
+  "stun:stun4.l.google.com:19302",
+];
 
-const TURN_CREDENTIAL_TTL_SECONDS = Number(
-  process.env.TURN_CREDENTIAL_TTL_SECONDS || 3600
-);
+function csvEnv(name) {
+  return String(process.env[name] || "")
+    .split(",")
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
+const STUN_URLS = csvEnv("STUN_URLS");
+
+const EFFECTIVE_STUN_URLS =
+  STUN_URLS.length > 0
+    ? STUN_URLS
+    : DEFAULT_STUN_URLS;
+
+/*
+  OPTION A
+  --------
+  KyroS-owned coturn using TURN REST/HMAC temporary credentials.
+
+  Example:
+
+  TURN_HOST=turn.kyro.app
+  TURN_SECRET=<same secret configured in coturn>
+*/
+
+const TURN_HOST =
+  String(process.env.TURN_HOST || "").trim();
+
+const TURN_SECRET =
+  String(process.env.TURN_SECRET || "").trim();
+
+const TURN_REALM =
+  process.env.TURN_REALM ||
+  TURN_HOST ||
+  "kyros";
+
+const TURN_CREDENTIAL_TTL_SECONDS =
+  Number(
+    process.env.TURN_CREDENTIAL_TTL_SECONDS ||
+    3600
+  );
+
+/*
+  OPTION B
+  --------
+  External TURN provider.
+
+  Example:
+
+  TURN_URLS=turn:relay.example.com:3478?transport=udp,turns:relay.example.com:5349?transport=tcp
+  TURN_USERNAME=username
+  TURN_CREDENTIAL=password
+*/
+
+const TURN_URLS =
+  csvEnv("TURN_URLS");
+
+const TURN_USERNAME =
+  String(process.env.TURN_USERNAME || "").trim();
+
+const TURN_CREDENTIAL =
+  String(process.env.TURN_CREDENTIAL || "").trim();
+
+const EXTERNAL_TURN_CONFIGURED =
+  Boolean(
+    TURN_URLS.length &&
+    TURN_USERNAME &&
+    TURN_CREDENTIAL
+  );
+
+const COTURN_CONFIGURED =
+  Boolean(
+    TURN_HOST &&
+    TURN_SECRET
+  );
+
+const TURN_CONFIGURED =
+  EXTERNAL_TURN_CONFIGURED ||
+  COTURN_CONFIGURED;
 
 /* ============================================================
    DOWNLOADS
@@ -84,6 +173,10 @@ const DOWNLOADS = {
     downloadName: "KyroS-Windows.exe",
   },
 };
+
+/* ============================================================
+   ALLOWED VALUES
+   ============================================================ */
 
 const ALLOWED_DESTINATIONS = new Set([
   "youtube",
@@ -135,7 +228,10 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS kyros_installations (
         installation_id UUID PRIMARY KEY,
 
-        platform VARCHAR(20) NOT NULL DEFAULT 'unknown',
+        platform VARCHAR(20)
+          NOT NULL
+          DEFAULT 'unknown',
+
         manufacturer VARCHAR(100),
         brand VARCHAR(100),
         model VARCHAR(150),
@@ -161,15 +257,25 @@ async function initializeDatabase() {
         total_memory_mb BIGINT,
         low_ram_device BOOLEAN,
 
-        first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        first_seen_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
+        last_seen_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
 
         last_network_country VARCHAR(10),
 
         clustered_data JSONB,
 
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
+        updated_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW()
       )
     `);
 
@@ -177,31 +283,60 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS kyros_sessions (
         session_id UUID PRIMARY KEY,
 
-        installation_id UUID NOT NULL
+        installation_id UUID
+          NOT NULL
           REFERENCES kyros_installations(installation_id)
           ON DELETE CASCADE,
 
-        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
+        last_seen_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
         ended_at TIMESTAMPTZ,
 
-        app_state VARCHAR(50) NOT NULL DEFAULT 'unknown',
+        app_state VARCHAR(50)
+          NOT NULL
+          DEFAULT 'unknown',
 
-        is_foreground BOOLEAN NOT NULL DEFAULT TRUE,
-        is_broadcasting BOOLEAN NOT NULL DEFAULT FALSE,
-        is_recording BOOLEAN NOT NULL DEFAULT FALSE,
-        is_screen_sharing BOOLEAN NOT NULL DEFAULT FALSE,
-        is_remote_camera BOOLEAN NOT NULL DEFAULT FALSE,
+        is_foreground BOOLEAN
+          NOT NULL
+          DEFAULT TRUE,
+
+        is_broadcasting BOOLEAN
+          NOT NULL
+          DEFAULT FALSE,
+
+        is_recording BOOLEAN
+          NOT NULL
+          DEFAULT FALSE,
+
+        is_screen_sharing BOOLEAN
+          NOT NULL
+          DEFAULT FALSE,
+
+        is_remote_camera BOOLEAN
+          NOT NULL
+          DEFAULT FALSE,
 
         network_transport VARCHAR(30),
+
         internet_validated BOOLEAN,
 
         battery_percent INTEGER,
         charging BOOLEAN,
         power_save BOOLEAN,
 
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
+        updated_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW()
       )
     `);
 
@@ -209,22 +344,37 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS kyros_broadcasts (
         broadcast_id UUID PRIMARY KEY,
 
-        session_id UUID NOT NULL
+        session_id UUID
+          NOT NULL
           REFERENCES kyros_sessions(session_id)
           ON DELETE CASCADE,
 
-        installation_id UUID NOT NULL
+        installation_id UUID
+          NOT NULL
           REFERENCES kyros_installations(installation_id)
           ON DELETE CASCADE,
 
-        destinations TEXT[] NOT NULL DEFAULT '{}',
+        destinations TEXT[]
+          NOT NULL
+          DEFAULT '{}',
 
-        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
+        last_seen_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
         ended_at TIMESTAMPTZ,
 
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
+        updated_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW()
       )
     `);
 
@@ -242,25 +392,50 @@ async function initializeDatabase() {
 
         email VARCHAR(320),
 
-        title VARCHAR(200) NOT NULL,
-        description TEXT NOT NULL,
+        title VARCHAR(200)
+          NOT NULL,
 
-        screenshots JSONB NOT NULL DEFAULT '[]'::jsonb,
+        description TEXT
+          NOT NULL,
+
+        screenshots JSONB
+          NOT NULL
+          DEFAULT '[]'::jsonb,
 
         platform VARCHAR(20),
+
         app_version VARCHAR(50),
         app_build VARCHAR(50),
         device_model VARCHAR(150),
 
         clustered_data JSONB,
 
-        addressed BOOLEAN NOT NULL DEFAULT FALSE,
+        addressed BOOLEAN
+          NOT NULL
+          DEFAULT FALSE,
+
         addressed_at TIMESTAMPTZ,
 
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
+
+        updated_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW()
       )
     `);
+
+    /*
+      One row represents one Studio <-> Remote Camera pairing.
+
+      Security:
+      - connection_code is temporary.
+      - peer tokens are never stored directly.
+      - only SHA-256 token hashes are stored.
+      - the 6-digit code becomes NULL once Studio claims it.
+      - SDP and ICE messages are not stored.
+    */
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS kyros_remote_camera_sessions (
@@ -268,7 +443,9 @@ async function initializeDatabase() {
 
         connection_code VARCHAR(6) UNIQUE,
 
-        status VARCHAR(20) NOT NULL DEFAULT 'waiting'
+        status VARCHAR(20)
+          NOT NULL
+          DEFAULT 'waiting'
           CHECK (
             status IN (
               'waiting',
@@ -299,26 +476,38 @@ async function initializeDatabase() {
         studio_token_hash CHAR(64),
         camera_token_hash CHAR(64),
 
-        connection_mode VARCHAR(20) NOT NULL DEFAULT 'webrtc',
+        connection_mode VARCHAR(20)
+          NOT NULL
+          DEFAULT 'webrtc',
 
         relay_used BOOLEAN,
 
         selected_candidate_type VARCHAR(30),
 
         round_trip_ms DOUBLE PRECISION,
+
         packet_loss_percent DOUBLE PRECISION,
 
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
 
-        expires_at TIMESTAMPTZ NOT NULL,
+        expires_at TIMESTAMPTZ
+          NOT NULL,
 
         joined_at TIMESTAMPTZ,
+
         connected_at TIMESTAMPTZ,
+
         disconnected_at TIMESTAMPTZ,
 
-        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
 
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW(),
 
         CHECK (
           connection_code IS NULL
@@ -331,7 +520,8 @@ async function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS kyros_remote_camera_events (
         event_id BIGSERIAL PRIMARY KEY,
 
-        remote_camera_id UUID NOT NULL
+        remote_camera_id UUID
+          NOT NULL
           REFERENCES kyros_remote_camera_sessions(remote_camera_id)
           ON DELETE CASCADE,
 
@@ -345,12 +535,32 @@ async function initializeDatabase() {
             )
           ),
 
-        event_type VARCHAR(50) NOT NULL,
+        event_type VARCHAR(50)
+          NOT NULL,
 
-        details JSONB NOT NULL DEFAULT '{}'::jsonb,
+        details JSONB
+          NOT NULL
+          DEFAULT '{}'::jsonb,
 
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        created_at TIMESTAMPTZ
+          NOT NULL
+          DEFAULT NOW()
       )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_kir_created
+      ON kyros_issue_reports(created_at DESC)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_kir_addressed
+      ON kyros_issue_reports(addressed, created_at DESC)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_kir_installation
+      ON kyros_issue_reports(installation_id)
     `);
 
     await client.query(`
@@ -389,23 +599,11 @@ async function initializeDatabase() {
     `);
 
     await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_kir_created
-      ON kyros_issue_reports(created_at DESC)
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_kir_addressed
-      ON kyros_issue_reports(addressed, created_at DESC)
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_kir_installation
-      ON kyros_issue_reports(installation_id)
-    `);
-
-    await client.query(`
       CREATE INDEX IF NOT EXISTS idx_krcs_code_status
-      ON kyros_remote_camera_sessions(connection_code, status)
+      ON kyros_remote_camera_sessions(
+        connection_code,
+        status
+      )
     `);
 
     await client.query(`
@@ -442,11 +640,18 @@ async function initializeDatabase() {
 
     await client.query("COMMIT");
 
-    console.log("KyroS database initialized.");
+    console.log(
+      "KyroS database initialized."
+    );
+
   } catch (e) {
+
     await client.query("ROLLBACK");
+
     throw e;
+
   } finally {
+
     client.release();
   }
 }
@@ -462,43 +667,61 @@ function str(v, max = 200) {
 
   const s = v.trim();
 
-  if (!s) {
-    return null;
-  }
-
-  return s.slice(0, max);
+  return s
+    ? s.slice(0, max)
+    : null;
 }
 
-function int(v, min = null, max = null) {
+function int(
+  v,
+  min = null,
+  max = null
+) {
   const n = Number(v);
 
   if (!Number.isInteger(n)) {
     return null;
   }
 
-  if (min !== null && n < min) {
+  if (
+    min !== null &&
+    n < min
+  ) {
     return null;
   }
 
-  if (max !== null && n > max) {
+  if (
+    max !== null &&
+    n > max
+  ) {
     return null;
   }
 
   return n;
 }
 
-function num(v, min = null, max = null) {
+function num(
+  v,
+  min = null,
+  max = null
+) {
   const n = Number(v);
 
   if (!Number.isFinite(n)) {
     return null;
   }
 
-  if (min !== null && n < min) {
+  if (
+    min !== null &&
+    n < min
+  ) {
     return null;
   }
 
-  if (max !== null && n > max) {
+  if (
+    max !== null &&
+    n > max
+  ) {
     return null;
   }
 
@@ -519,9 +742,11 @@ function uuid(v) {
 }
 
 function platform(v) {
-  const p = (
-    str(v, 20) || "unknown"
-  ).toLowerCase();
+  const p =
+    (
+      str(v, 20) ||
+      "unknown"
+    ).toLowerCase();
 
   return ALLOWED_PLATFORMS.has(p)
     ? p
@@ -537,31 +762,34 @@ function destinations(v) {
     ...new Set(
       v
         .filter(
-          (x) => typeof x === "string"
+          x =>
+            typeof x === "string"
         )
         .map(
-          (x) => x.trim().toLowerCase()
+          x =>
+            x.trim().toLowerCase()
         )
         .filter(
-          (x) => ALLOWED_DESTINATIONS.has(x)
+          x =>
+            ALLOWED_DESTINATIONS.has(x)
         )
     ),
   ].slice(0, 20);
 }
 
 function country(req) {
-  const possible = [
+  for (const h of [
     req.headers["cf-ipcountry"],
     req.headers["x-vercel-ip-country"],
     req.headers["x-country-code"],
-  ];
-
-  for (const h of possible) {
+  ]) {
     if (
       typeof h === "string" &&
       /^[A-Za-z]{2}$/.test(h.trim())
     ) {
-      return h.trim().toUpperCase();
+      return h
+        .trim()
+        .toUpperCase();
     }
   }
 
@@ -575,15 +803,18 @@ function screenshotList(v) {
 
   return v
     .filter(
-      (x) => typeof x === "string"
+      x =>
+        typeof x === "string"
     )
     .map(
-      (x) => x.trim()
+      x =>
+        x.trim()
     )
     .filter(Boolean)
     .slice(0, 6)
     .map(
-      (x) => x.slice(0, 1000)
+      x =>
+        x.slice(0, 1000)
     );
 }
 
@@ -593,10 +824,8 @@ function limitInt(
   min,
   max
 ) {
-  const n = Number.parseInt(
-    v,
-    10
-  );
+  const n =
+    Number.parseInt(v, 10);
 
   if (!Number.isFinite(n)) {
     return fallback;
@@ -611,6 +840,10 @@ function limitInt(
   );
 }
 
+/* ============================================================
+   REMOTE CAMERA HELPERS
+   ============================================================ */
+
 function normalizeConnectionCode(v) {
   if (
     typeof v !== "string" &&
@@ -619,8 +852,9 @@ function normalizeConnectionCode(v) {
     return null;
   }
 
-  const code = String(v)
-    .replace(/\D/g, "");
+  const code =
+    String(v)
+      .replace(/\D/g, "");
 
   return /^[0-9]{6}$/.test(code)
     ? code
@@ -674,14 +908,15 @@ async function existingInstallationId(v) {
     return null;
   }
 
-  const q = await pool.query(
-    `
+  const q =
+    await pool.query(
+      `
       SELECT installation_id
       FROM kyros_installations
       WHERE installation_id=$1
-    `,
-    [v]
-  );
+      `,
+      [v]
+    );
 
   return q.rowCount
     ? v
@@ -693,14 +928,15 @@ async function existingSessionId(v) {
     return null;
   }
 
-  const q = await pool.query(
-    `
+  const q =
+    await pool.query(
+      `
       SELECT session_id
       FROM kyros_sessions
       WHERE session_id=$1
-    `,
-    [v]
-  );
+      `,
+      [v]
+    );
 
   return q.rowCount
     ? v
@@ -716,27 +952,30 @@ async function logRemoteEvent(
   try {
     await pool.query(
       `
-        INSERT INTO kyros_remote_camera_events (
-          remote_camera_id,
-          peer_role,
-          event_type,
-          details
-        )
-        VALUES (
-          $1,
-          $2,
-          $3,
-          $4::jsonb
-        )
+      INSERT INTO kyros_remote_camera_events (
+        remote_camera_id,
+        peer_role,
+        event_type,
+        details
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        $4::jsonb
+      )
       `,
       [
         remoteCameraId,
 
-        ALLOWED_REMOTE_ROLES.has(peerRole)
+        ALLOWED_REMOTE_ROLES.has(
+          peerRole
+        )
           ? peerRole
           : "server",
 
-        String(eventType).slice(0, 50),
+        String(eventType)
+          .slice(0, 50),
 
         JSON.stringify(
           details &&
@@ -746,7 +985,9 @@ async function logRemoteEvent(
         ),
       ]
     );
+
   } catch (e) {
+
     console.warn(
       "Remote camera event log failed:",
       e.message
@@ -775,21 +1016,23 @@ async function authenticateRemotePeer(
     return null;
   }
 
-  const result = await pool.query(
-    `
+  const result =
+    await pool.query(
+      `
       SELECT *
       FROM kyros_remote_camera_sessions
       WHERE remote_camera_id=$1
       LIMIT 1
-    `,
-    [remoteCameraId]
-  );
+      `,
+      [remoteCameraId]
+    );
 
   if (!result.rowCount) {
     return null;
   }
 
-  const row = result.rows[0];
+  const row =
+    result.rows[0];
 
   const expected =
     role === "studio"
@@ -800,7 +1043,8 @@ async function authenticateRemotePeer(
     return null;
   }
 
-  const actual = tokenHash(token);
+  const actual =
+    tokenHash(token);
 
   if (
     !safeEqualHash(
@@ -856,23 +1100,46 @@ function publicRemoteSession(row) {
   };
 }
 
-function buildIceServers(
-  remoteCameraId
-) {
-  const servers = [];
+/* ============================================================
+   ICE SERVER GENERATION
+   ============================================================ */
 
-  if (STUN_HOST) {
+function buildIceServers(remoteCameraId) {
+  const servers = [
+    {
+      urls:
+        EFFECTIVE_STUN_URLS,
+    },
+  ];
+
+  /*
+    External hosted TURN provider.
+  */
+
+  if (EXTERNAL_TURN_CONFIGURED) {
     servers.push({
-      urls: [
-        `stun:${STUN_HOST}:3478`,
-      ],
+      urls:
+        TURN_URLS,
+
+      username:
+        TURN_USERNAME,
+
+      credential:
+        TURN_CREDENTIAL,
     });
   }
 
-  if (
-    TURN_HOST &&
-    TURN_SECRET
-  ) {
+  /*
+    KyroS-owned coturn.
+
+    Temporary TURN credentials are generated
+    from the shared secret.
+
+    The master TURN secret never enters
+    the Flutter or Android application.
+  */
+
+  if (COTURN_CONFIGURED) {
     const expiry =
       Math.floor(
         Date.now() / 1000
@@ -915,9 +1182,7 @@ app.use(
   express.static(
     PUBLIC_DIR,
     {
-      extensions: [
-        "html",
-      ],
+      extensions: ["html"],
       maxAge: "1h",
     }
   )
@@ -929,7 +1194,8 @@ app.get(
     const item =
       DOWNLOADS[
         String(
-          req.params.platform || ""
+          req.params.platform ||
+          ""
         ).toLowerCase()
       ];
 
@@ -957,7 +1223,6 @@ app.get(
         .status(503)
         .json({
           ok: false,
-
           error:
             "release_not_available",
 
@@ -997,12 +1262,8 @@ app.get(
 
       releases[name] = {
         available:
-          fs.existsSync(
-            filePath
-          ) &&
-          fs.statSync(
-            filePath
-          ).size > 0,
+          fs.existsSync(filePath) &&
+          fs.statSync(filePath).size > 0,
 
         url:
           `/download/${name}`,
@@ -1036,11 +1297,7 @@ app.post(
       let sessionId =
         body.sessionId;
 
-      if (
-        !uuid(
-          installationId
-        )
-      ) {
+      if (!uuid(installationId)) {
         return res
           .status(400)
           .json({
@@ -1050,11 +1307,7 @@ app.post(
           });
       }
 
-      if (
-        !uuid(
-          sessionId
-        )
-      ) {
+      if (!uuid(sessionId)) {
         sessionId =
           crypto.randomUUID();
       }
@@ -1115,20 +1368,6 @@ app.post(
           ? body.broadcast
           : {};
 
-      /*
-        Important:
-        clusteredData is accepted exactly as supplied
-        by the app.
-
-        It is not flattened.
-        It is not renamed.
-        It is not coerced.
-
-        PostgreSQL JSONB will parse it as JSON,
-        but our application does not alter
-        its structure.
-      */
-
       const clusteredData =
         body.clusteredData &&
         typeof body.clusteredData ===
@@ -1163,182 +1402,178 @@ app.post(
 
       await client.query(
         `
-          INSERT INTO kyros_installations (
-            installation_id,
-            platform,
-            manufacturer,
-            brand,
-            model,
-            os_version,
-            os_api,
-            app_version,
-            app_build,
-            app_language,
-            device_language,
-            device_locale,
-            device_region,
-            timezone,
-            screen_width,
-            screen_height,
-            screen_density,
-            screen_refresh_rate,
-            cpu_cores,
-            total_memory_mb,
-            low_ram_device,
-            last_network_country,
-            clustered_data,
-            first_seen_at,
-            last_seen_at,
-            created_at,
-            updated_at
-          )
-          VALUES (
-            $1,$2,$3,$4,$5,$6,$7,
-            $8,$9,$10,$11,$12,$13,$14,
-            $15,$16,$17,$18,$19,$20,$21,
-            $22,$23::jsonb,
-            NOW(),NOW(),NOW(),NOW()
-          )
+        INSERT INTO kyros_installations (
+          installation_id,
+          platform,
+          manufacturer,
+          brand,
+          model,
+          os_version,
+          os_api,
+          app_version,
+          app_build,
+          app_language,
+          device_language,
+          device_locale,
+          device_region,
+          timezone,
+          screen_width,
+          screen_height,
+          screen_density,
+          screen_refresh_rate,
+          cpu_cores,
+          total_memory_mb,
+          low_ram_device,
+          last_network_country,
+          clustered_data,
+          first_seen_at,
+          last_seen_at,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1,$2,$3,$4,$5,$6,$7,
+          $8,$9,$10,$11,$12,$13,$14,
+          $15,$16,$17,$18,$19,$20,$21,
+          $22,$23::jsonb,
+          NOW(),NOW(),NOW(),NOW()
+        )
+        ON CONFLICT (installation_id)
+        DO UPDATE SET
+          platform=
+            EXCLUDED.platform,
 
-          ON CONFLICT (
-            installation_id
-          )
+          manufacturer=
+            COALESCE(
+              EXCLUDED.manufacturer,
+              kyros_installations.manufacturer
+            ),
 
-          DO UPDATE SET
-            platform =
-              EXCLUDED.platform,
+          brand=
+            COALESCE(
+              EXCLUDED.brand,
+              kyros_installations.brand
+            ),
 
-            manufacturer =
-              COALESCE(
-                EXCLUDED.manufacturer,
-                kyros_installations.manufacturer
-              ),
+          model=
+            COALESCE(
+              EXCLUDED.model,
+              kyros_installations.model
+            ),
 
-            brand =
-              COALESCE(
-                EXCLUDED.brand,
-                kyros_installations.brand
-              ),
+          os_version=
+            COALESCE(
+              EXCLUDED.os_version,
+              kyros_installations.os_version
+            ),
 
-            model =
-              COALESCE(
-                EXCLUDED.model,
-                kyros_installations.model
-              ),
+          os_api=
+            COALESCE(
+              EXCLUDED.os_api,
+              kyros_installations.os_api
+            ),
 
-            os_version =
-              COALESCE(
-                EXCLUDED.os_version,
-                kyros_installations.os_version
-              ),
+          app_version=
+            COALESCE(
+              EXCLUDED.app_version,
+              kyros_installations.app_version
+            ),
 
-            os_api =
-              COALESCE(
-                EXCLUDED.os_api,
-                kyros_installations.os_api
-              ),
+          app_build=
+            COALESCE(
+              EXCLUDED.app_build,
+              kyros_installations.app_build
+            ),
 
-            app_version =
-              COALESCE(
-                EXCLUDED.app_version,
-                kyros_installations.app_version
-              ),
+          app_language=
+            COALESCE(
+              EXCLUDED.app_language,
+              kyros_installations.app_language
+            ),
 
-            app_build =
-              COALESCE(
-                EXCLUDED.app_build,
-                kyros_installations.app_build
-              ),
+          device_language=
+            COALESCE(
+              EXCLUDED.device_language,
+              kyros_installations.device_language
+            ),
 
-            app_language =
-              COALESCE(
-                EXCLUDED.app_language,
-                kyros_installations.app_language
-              ),
+          device_locale=
+            COALESCE(
+              EXCLUDED.device_locale,
+              kyros_installations.device_locale
+            ),
 
-            device_language =
-              COALESCE(
-                EXCLUDED.device_language,
-                kyros_installations.device_language
-              ),
+          device_region=
+            COALESCE(
+              EXCLUDED.device_region,
+              kyros_installations.device_region
+            ),
 
-            device_locale =
-              COALESCE(
-                EXCLUDED.device_locale,
-                kyros_installations.device_locale
-              ),
+          timezone=
+            COALESCE(
+              EXCLUDED.timezone,
+              kyros_installations.timezone
+            ),
 
-            device_region =
-              COALESCE(
-                EXCLUDED.device_region,
-                kyros_installations.device_region
-              ),
+          screen_width=
+            COALESCE(
+              EXCLUDED.screen_width,
+              kyros_installations.screen_width
+            ),
 
-            timezone =
-              COALESCE(
-                EXCLUDED.timezone,
-                kyros_installations.timezone
-              ),
+          screen_height=
+            COALESCE(
+              EXCLUDED.screen_height,
+              kyros_installations.screen_height
+            ),
 
-            screen_width =
-              COALESCE(
-                EXCLUDED.screen_width,
-                kyros_installations.screen_width
-              ),
+          screen_density=
+            COALESCE(
+              EXCLUDED.screen_density,
+              kyros_installations.screen_density
+            ),
 
-            screen_height =
-              COALESCE(
-                EXCLUDED.screen_height,
-                kyros_installations.screen_height
-              ),
+          screen_refresh_rate=
+            COALESCE(
+              EXCLUDED.screen_refresh_rate,
+              kyros_installations.screen_refresh_rate
+            ),
 
-            screen_density =
-              COALESCE(
-                EXCLUDED.screen_density,
-                kyros_installations.screen_density
-              ),
+          cpu_cores=
+            COALESCE(
+              EXCLUDED.cpu_cores,
+              kyros_installations.cpu_cores
+            ),
 
-            screen_refresh_rate =
-              COALESCE(
-                EXCLUDED.screen_refresh_rate,
-                kyros_installations.screen_refresh_rate
-              ),
+          total_memory_mb=
+            COALESCE(
+              EXCLUDED.total_memory_mb,
+              kyros_installations.total_memory_mb
+            ),
 
-            cpu_cores =
-              COALESCE(
-                EXCLUDED.cpu_cores,
-                kyros_installations.cpu_cores
-              ),
+          low_ram_device=
+            COALESCE(
+              EXCLUDED.low_ram_device,
+              kyros_installations.low_ram_device
+            ),
 
-            total_memory_mb =
-              COALESCE(
-                EXCLUDED.total_memory_mb,
-                kyros_installations.total_memory_mb
-              ),
+          last_network_country=
+            COALESCE(
+              EXCLUDED.last_network_country,
+              kyros_installations.last_network_country
+            ),
 
-            low_ram_device =
-              COALESCE(
-                EXCLUDED.low_ram_device,
-                kyros_installations.low_ram_device
-              ),
+          clustered_data=
+            COALESCE(
+              EXCLUDED.clustered_data,
+              kyros_installations.clustered_data
+            ),
 
-            last_network_country =
-              COALESCE(
-                EXCLUDED.last_network_country,
-                kyros_installations.last_network_country
-              ),
+          last_seen_at=
+            NOW(),
 
-            clustered_data =
-              COALESCE(
-                EXCLUDED.clustered_data,
-                kyros_installations.clustered_data
-              ),
-
-            last_seen_at =
-              NOW(),
-
-            updated_at =
-              NOW()
+          updated_at=
+            NOW()
         `,
         [
           installationId,
@@ -1458,77 +1693,71 @@ app.post(
 
       await client.query(
         `
-          INSERT INTO kyros_sessions (
-            session_id,
-            installation_id,
-            started_at,
-            last_seen_at,
-            app_state,
-            is_foreground,
-            is_broadcasting,
-            is_recording,
-            is_screen_sharing,
-            is_remote_camera,
-            network_transport,
-            internet_validated,
-            battery_percent,
-            charging,
-            power_save,
-            created_at,
-            updated_at
-          )
-          VALUES (
-            $1,$2,
+        INSERT INTO kyros_sessions (
+          session_id,
+          installation_id,
+          started_at,
+          last_seen_at,
+          app_state,
+          is_foreground,
+          is_broadcasting,
+          is_recording,
+          is_screen_sharing,
+          is_remote_camera,
+          network_transport,
+          internet_validated,
+          battery_percent,
+          charging,
+          power_save,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          $1,$2,NOW(),NOW(),
+          $3,$4,$5,$6,$7,$8,
+          $9,$10,$11,$12,$13,
+          NOW(),NOW()
+        )
+        ON CONFLICT (session_id)
+        DO UPDATE SET
+          last_seen_at=
             NOW(),
-            NOW(),
-            $3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-            NOW(),
+
+          app_state=
+            EXCLUDED.app_state,
+
+          is_foreground=
+            EXCLUDED.is_foreground,
+
+          is_broadcasting=
+            EXCLUDED.is_broadcasting,
+
+          is_recording=
+            EXCLUDED.is_recording,
+
+          is_screen_sharing=
+            EXCLUDED.is_screen_sharing,
+
+          is_remote_camera=
+            EXCLUDED.is_remote_camera,
+
+          network_transport=
+            EXCLUDED.network_transport,
+
+          internet_validated=
+            EXCLUDED.internet_validated,
+
+          battery_percent=
+            EXCLUDED.battery_percent,
+
+          charging=
+            EXCLUDED.charging,
+
+          power_save=
+            EXCLUDED.power_save,
+
+          updated_at=
             NOW()
-          )
-
-          ON CONFLICT (
-            session_id
-          )
-
-          DO UPDATE SET
-            last_seen_at =
-              NOW(),
-
-            app_state =
-              EXCLUDED.app_state,
-
-            is_foreground =
-              EXCLUDED.is_foreground,
-
-            is_broadcasting =
-              EXCLUDED.is_broadcasting,
-
-            is_recording =
-              EXCLUDED.is_recording,
-
-            is_screen_sharing =
-              EXCLUDED.is_screen_sharing,
-
-            is_remote_camera =
-              EXCLUDED.is_remote_camera,
-
-            network_transport =
-              EXCLUDED.network_transport,
-
-            internet_validated =
-              EXCLUDED.internet_validated,
-
-            battery_percent =
-              EXCLUDED.battery_percent,
-
-            charging =
-              EXCLUDED.charging,
-
-            power_save =
-              EXCLUDED.power_save,
-
-            updated_at =
-              NOW()
         `,
         [
           sessionId,
@@ -1538,30 +1767,25 @@ app.post(
           str(
             state.appState,
             50
-          ) ||
-            "unknown",
+          ) || "unknown",
 
           bool(
             state.foreground
-          ) ??
-            true,
+          ) ?? true,
 
           broadcasting,
 
           bool(
             state.recording
-          ) ??
-            false,
+          ) ?? false,
 
           bool(
             state.screenSharing
-          ) ??
-            false,
+          ) ?? false,
 
           bool(
             state.remoteCamera
-          ) ??
-            false,
+          ) ?? false,
 
           str(
             network.transport,
@@ -1595,29 +1819,17 @@ app.post(
           ? broadcast.broadcastId
           : null;
 
-      if (
-        broadcasting
-      ) {
-        if (
-          !broadcastId
-        ) {
+      if (broadcasting) {
+        if (!broadcastId) {
           const found =
             await client.query(
               `
-                SELECT
-                  broadcast_id
-
-                FROM
-                  kyros_broadcasts
-
-                WHERE
-                  session_id=$1
-                  AND ended_at IS NULL
-
-                ORDER BY
-                  started_at DESC
-
-                LIMIT 1
+              SELECT broadcast_id
+              FROM kyros_broadcasts
+              WHERE session_id=$1
+                AND ended_at IS NULL
+              ORDER BY started_at DESC
+              LIMIT 1
               `,
               [
                 sessionId,
@@ -1632,38 +1844,30 @@ app.post(
 
         await client.query(
           `
-            INSERT INTO kyros_broadcasts (
-              broadcast_id,
-              session_id,
-              installation_id,
-              destinations,
-              started_at,
-              last_seen_at,
-              created_at,
-              updated_at
-            )
+          INSERT INTO kyros_broadcasts (
+            broadcast_id,
+            session_id,
+            installation_id,
+            destinations,
+            started_at,
+            last_seen_at,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            $1,$2,$3,$4,
+            NOW(),NOW(),NOW(),NOW()
+          )
+          ON CONFLICT (broadcast_id)
+          DO UPDATE SET
+            destinations=
+              EXCLUDED.destinations,
 
-            VALUES (
-              $1,$2,$3,$4,
+            last_seen_at=
               NOW(),
-              NOW(),
-              NOW(),
+
+            updated_at=
               NOW()
-            )
-
-            ON CONFLICT (
-              broadcast_id
-            )
-
-            DO UPDATE SET
-              destinations =
-                EXCLUDED.destinations,
-
-              last_seen_at =
-                NOW(),
-
-              updated_at =
-                NOW()
           `,
           [
             broadcastId,
@@ -1675,25 +1879,22 @@ app.post(
       } else {
         await client.query(
           `
-            UPDATE
-              kyros_broadcasts
-
-            SET
-              ended_at =
-                COALESCE(
-                  ended_at,
-                  NOW()
-                ),
-
-              last_seen_at =
-                NOW(),
-
-              updated_at =
+          UPDATE kyros_broadcasts
+          SET
+            ended_at=
+              COALESCE(
+                ended_at,
                 NOW()
+              ),
 
-            WHERE
-              session_id=$1
-              AND ended_at IS NULL
+            last_seen_at=
+              NOW(),
+
+            updated_at=
+              NOW()
+
+          WHERE session_id=$1
+            AND ended_at IS NULL
           `,
           [
             sessionId,
@@ -1718,12 +1919,15 @@ app.post(
         broadcastId,
 
         serverTime:
-          new Date().toISOString(),
+          new Date()
+            .toISOString(),
 
         activeTimeoutSeconds:
           ACTIVE_TIMEOUT_SECONDS,
       });
+
     } catch (e) {
+
       try {
         await client.query(
           "ROLLBACK"
@@ -1742,7 +1946,9 @@ app.post(
           error:
             "telemetry_failed",
         });
+
     } finally {
+
       client.release();
     }
   }
@@ -1758,35 +1964,26 @@ app.post(
     try {
       const body =
         req.body &&
-        typeof req.body ===
-          "object"
+        typeof req.body === "object"
           ? req.body
           : {};
 
       const issueId =
-        uuid(
-          body.id
-        )
+        uuid(body.id)
           ? body.id
           : (
-              uuid(
-                body.issueId
-              )
+              uuid(body.issueId)
                 ? body.issueId
                 : crypto.randomUUID()
             );
 
       const installationId =
-        uuid(
-          body.installationId
-        )
+        uuid(body.installationId)
           ? body.installationId
           : null;
 
       const sessionId =
-        uuid(
-          body.sessionId
-        )
+        uuid(body.sessionId)
           ? body.sessionId
           : null;
 
@@ -1816,31 +2013,27 @@ app.post(
       const platformValue =
         platform(
           body.platform ||
-          body.device
-            ?.platform
+          body.device?.platform
         );
 
       const appVersion =
         str(
           body.appVersion ||
-          body.app
-            ?.version,
+          body.app?.version,
           50
         );
 
       const appBuild =
         str(
           body.appBuild ||
-          body.app
-            ?.build,
+          body.app?.build,
           50
         );
 
       const deviceModel =
         str(
           body.deviceModel ||
-          body.device
-            ?.model,
+          body.device?.model,
           150
         );
 
@@ -1859,6 +2052,7 @@ app.post(
           .status(400)
           .json({
             ok: false,
+
             error:
               "title_and_description_required",
           });
@@ -1870,47 +2064,39 @@ app.post(
       let safeSessionId =
         sessionId;
 
-      if (
-        safeInstallationId
-      ) {
+      if (safeInstallationId) {
         const found =
           await pool.query(
             `
-              SELECT 1
-              FROM kyros_installations
-              WHERE installation_id=$1
+            SELECT 1
+            FROM kyros_installations
+            WHERE installation_id=$1
             `,
             [
               safeInstallationId,
             ]
           );
 
-        if (
-          !found.rowCount
-        ) {
+        if (!found.rowCount) {
           safeInstallationId =
             null;
         }
       }
 
-      if (
-        safeSessionId
-      ) {
+      if (safeSessionId) {
         const found =
           await pool.query(
             `
-              SELECT 1
-              FROM kyros_sessions
-              WHERE session_id=$1
+            SELECT 1
+            FROM kyros_sessions
+            WHERE session_id=$1
             `,
             [
               safeSessionId,
             ]
           );
 
-        if (
-          !found.rowCount
-        ) {
+        if (!found.rowCount) {
           safeSessionId =
             null;
         }
@@ -1919,90 +2105,86 @@ app.post(
       const result =
         await pool.query(
           `
-            INSERT INTO kyros_issue_reports (
-              issue_id,
-              installation_id,
-              session_id,
-              email,
-              title,
-              description,
-              screenshots,
-              platform,
-              app_version,
-              app_build,
-              device_model,
-              clustered_data,
-              addressed,
-              created_at,
-              updated_at
-            )
-            VALUES (
-              $1,$2,$3,$4,$5,$6,
-              $7::jsonb,
-              $8,$9,$10,$11,
-              $12::jsonb,
-              FALSE,
-              NOW(),
+          INSERT INTO kyros_issue_reports (
+            issue_id,
+            installation_id,
+            session_id,
+            email,
+            title,
+            description,
+            screenshots,
+            platform,
+            app_version,
+            app_build,
+            device_model,
+            clustered_data,
+            addressed,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            $1,$2,$3,$4,$5,$6,
+            $7::jsonb,
+            $8,$9,$10,$11,
+            $12::jsonb,
+            FALSE,
+            NOW(),
+            NOW()
+          )
+          ON CONFLICT (issue_id)
+          DO UPDATE SET
+            email=
+              COALESCE(
+                EXCLUDED.email,
+                kyros_issue_reports.email
+              ),
+
+            title=
+              EXCLUDED.title,
+
+            description=
+              EXCLUDED.description,
+
+            screenshots=
+              EXCLUDED.screenshots,
+
+            platform=
+              COALESCE(
+                EXCLUDED.platform,
+                kyros_issue_reports.platform
+              ),
+
+            app_version=
+              COALESCE(
+                EXCLUDED.app_version,
+                kyros_issue_reports.app_version
+              ),
+
+            app_build=
+              COALESCE(
+                EXCLUDED.app_build,
+                kyros_issue_reports.app_build
+              ),
+
+            device_model=
+              COALESCE(
+                EXCLUDED.device_model,
+                kyros_issue_reports.device_model
+              ),
+
+            clustered_data=
+              COALESCE(
+                EXCLUDED.clustered_data,
+                kyros_issue_reports.clustered_data
+              ),
+
+            updated_at=
               NOW()
-            )
 
-            ON CONFLICT (
-              issue_id
-            )
-
-            DO UPDATE SET
-              email =
-                COALESCE(
-                  EXCLUDED.email,
-                  kyros_issue_reports.email
-                ),
-
-              title =
-                EXCLUDED.title,
-
-              description =
-                EXCLUDED.description,
-
-              screenshots =
-                EXCLUDED.screenshots,
-
-              platform =
-                COALESCE(
-                  EXCLUDED.platform,
-                  kyros_issue_reports.platform
-                ),
-
-              app_version =
-                COALESCE(
-                  EXCLUDED.app_version,
-                  kyros_issue_reports.app_version
-                ),
-
-              app_build =
-                COALESCE(
-                  EXCLUDED.app_build,
-                  kyros_issue_reports.app_build
-                ),
-
-              device_model =
-                COALESCE(
-                  EXCLUDED.device_model,
-                  kyros_issue_reports.device_model
-                ),
-
-              clustered_data =
-                COALESCE(
-                  EXCLUDED.clustered_data,
-                  kyros_issue_reports.clustered_data
-                ),
-
-              updated_at =
-                NOW()
-
-            RETURNING
-              issue_id,
-              addressed,
-              created_at
+          RETURNING
+            issue_id,
+            addressed,
+            created_at
           `,
           [
             issueId,
@@ -2048,7 +2230,9 @@ app.post(
           message:
             "Issue report received.",
         });
+
     } catch (e) {
+
       console.error(
         "Issue submission error:",
         e
@@ -2058,16 +2242,13 @@ app.post(
         .status(500)
         .json({
           ok: false,
+
           error:
             "issue_submission_failed",
         });
     }
   }
 );
-
-/* ============================================================
-   ADMIN ISSUE MANAGEMENT
-   ============================================================ */
 
 app.get(
   "/admin-issues",
@@ -2111,55 +2292,31 @@ app.get(
           `r.addressed=FALSE`
         );
       } else if (
-        status ===
-        "addressed"
+        status === "addressed"
       ) {
         where.push(
           `r.addressed=TRUE`
         );
       }
 
-      if (
-        search
-      ) {
+      if (search) {
         values.push(
           `%${search}%`
         );
 
-        where.push(
-          `
-            (
-              r.title
-                ILIKE
-                $${values.length}
-
-              OR r.description
-                ILIKE
-                $${values.length}
-
-              OR COALESCE(
-                r.email,
-                ''
-              )
-                ILIKE
-                $${values.length}
-
-              OR COALESCE(
-                r.device_model,
-                ''
-              )
-                ILIKE
-                $${values.length}
-            )
-          `
-        );
+        where.push(`
+          (
+            r.title ILIKE $${values.length}
+            OR r.description ILIKE $${values.length}
+            OR COALESCE(r.email,'') ILIKE $${values.length}
+            OR COALESCE(r.device_model,'') ILIKE $${values.length}
+          )
+        `);
       }
 
       const whereSql =
         where.length
-          ? `WHERE ${where.join(
-              " AND "
-            )}`
+          ? `WHERE ${where.join(" AND ")}`
           : "";
 
       values.push(
@@ -2174,81 +2331,69 @@ app.get(
         await Promise.all([
           pool.query(
             `
-              SELECT
-                r.issue_id,
-                r.installation_id,
-                r.session_id,
-                r.email,
-                r.title,
-                r.description,
-                r.screenshots,
-                r.platform,
-                r.app_version,
-                r.app_build,
-                r.device_model,
-                r.clustered_data,
-                r.addressed,
-                r.addressed_at,
-                r.created_at,
-                r.updated_at,
-                i.last_network_country
+            SELECT
+              r.issue_id,
+              r.installation_id,
+              r.session_id,
+              r.email,
+              r.title,
+              r.description,
+              r.screenshots,
+              r.platform,
+              r.app_version,
+              r.app_build,
+              r.device_model,
+              r.clustered_data,
+              r.addressed,
+              r.addressed_at,
+              r.created_at,
+              r.updated_at,
+              i.last_network_country
 
-              FROM
-                kyros_issue_reports r
+            FROM kyros_issue_reports r
 
-              LEFT JOIN
-                kyros_installations i
+            LEFT JOIN kyros_installations i
+              ON i.installation_id=
+                r.installation_id
 
-                ON
-                  i.installation_id =
-                  r.installation_id
+            ${whereSql}
 
-              ${whereSql}
+            ORDER BY
+              r.addressed ASC,
+              r.created_at DESC
 
-              ORDER BY
-                r.addressed ASC,
-                r.created_at DESC
+            LIMIT $${values.length - 1}
 
-              LIMIT
-                $${values.length - 1}
-
-              OFFSET
-                $${values.length}
+            OFFSET $${values.length}
             `,
             values
           ),
 
-          pool.query(
-            `
-              SELECT
-                COUNT(*)::int
-                  AS total,
+          pool.query(`
+            SELECT
+              COUNT(*)::int
+                AS total,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      addressed=FALSE
-                  )::int
-                  AS open,
+              COUNT(*) FILTER (
+                WHERE addressed=FALSE
+              )::int
+                AS open,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      addressed=TRUE
-                  )::int
-                  AS addressed
+              COUNT(*) FILTER (
+                WHERE addressed=TRUE
+              )::int
+                AS addressed
 
-              FROM
-                kyros_issue_reports
-            `
-          ),
+            FROM kyros_issue_reports
+          `),
         ]);
 
       res.json({
         ok: true,
 
         generatedAt:
-          new Date().toISOString(),
+          new Date()
+            .toISOString(),
 
         counts:
           counts.rows[0],
@@ -2260,7 +2405,9 @@ app.get(
 
         offset,
       });
+
     } catch (e) {
+
       console.error(
         "Admin issues error:",
         e
@@ -2270,6 +2417,7 @@ app.get(
         .status(500)
         .json({
           ok: false,
+
           error:
             "admin_issues_failed",
         });
@@ -2284,15 +2432,12 @@ app.patch(
       const issueId =
         req.params.issueId;
 
-      if (
-        !uuid(
-          issueId
-        )
-      ) {
+      if (!uuid(issueId)) {
         return res
           .status(400)
           .json({
             ok: false,
+
             error:
               "invalid_issue_id",
           });
@@ -2307,6 +2452,7 @@ app.patch(
           .status(400)
           .json({
             ok: false,
+
             error:
               "addressed_boolean_required",
           });
@@ -2318,35 +2464,31 @@ app.patch(
       const result =
         await pool.query(
           `
-            UPDATE
-              kyros_issue_reports
+          UPDATE kyros_issue_reports
 
-            SET
-              addressed=$2,
+          SET
+            addressed=$2,
 
-              addressed_at=
-                CASE
-                  WHEN $2
-                  THEN
-                    COALESCE(
-                      addressed_at,
-                      NOW()
-                    )
-                  ELSE
-                    NULL
-                END,
+            addressed_at=
+              CASE
+                WHEN $2
+                  THEN COALESCE(
+                    addressed_at,
+                    NOW()
+                  )
+                ELSE NULL
+              END,
 
-              updated_at=
-                NOW()
+            updated_at=
+              NOW()
 
-            WHERE
-              issue_id=$1
+          WHERE issue_id=$1
 
-            RETURNING
-              issue_id,
-              addressed,
-              addressed_at,
-              updated_at
+          RETURNING
+            issue_id,
+            addressed,
+            addressed_at,
+            updated_at
           `,
           [
             issueId,
@@ -2354,13 +2496,12 @@ app.patch(
           ]
         );
 
-      if (
-        !result.rowCount
-      ) {
+      if (!result.rowCount) {
         return res
           .status(404)
           .json({
             ok: false,
+
             error:
               "issue_not_found",
           });
@@ -2368,10 +2509,13 @@ app.patch(
 
       res.json({
         ok: true,
+
         issue:
           result.rows[0],
       });
+
     } catch (e) {
+
       console.error(
         "Issue update error:",
         e
@@ -2381,6 +2525,7 @@ app.patch(
         .status(500)
         .json({
           ok: false,
+
           error:
             "issue_update_failed",
         });
@@ -2389,9 +2534,21 @@ app.patch(
 );
 
 /* ============================================================
-   REMOTE CAMERA
-   CAMERA CREATES CODE
+   REMOTE CAMERA - CODE-BASED PAIRING
    ============================================================ */
+
+/*
+  CAMERA FLOW
+
+  POST /api/remote-camera/create
+
+  The CAMERA generates the six-digit connection code.
+
+  The Studio does not generate it.
+
+  The camera displays the code.
+  Studio enters that code.
+*/
 
 app.post(
   "/api/remote-camera/create",
@@ -2399,8 +2556,7 @@ app.post(
     try {
       const body =
         req.body &&
-        typeof req.body ===
-          "object"
+        typeof req.body === "object"
           ? req.body
           : {};
 
@@ -2440,50 +2596,38 @@ app.post(
           const result =
             await pool.query(
               `
-                INSERT INTO
-                  kyros_remote_camera_sessions (
-                    remote_camera_id,
-                    connection_code,
-                    status,
-                    camera_installation_id,
-                    camera_session_id,
-                    camera_token_hash,
-                    created_at,
-                    expires_at,
-                    last_seen_at,
-                    updated_at
-                  )
-
-                VALUES (
-                  $1,
-                  $2,
-                  'waiting',
-                  $3,
-                  $4,
-                  $5,
-                  NOW(),
-                  NOW() +
-                    (
-                      $6 *
-                      INTERVAL '1 minute'
-                    ),
-                  NOW(),
-                  NOW()
-                )
-
-                RETURNING *
+              INSERT INTO kyros_remote_camera_sessions (
+                remote_camera_id,
+                connection_code,
+                status,
+                camera_installation_id,
+                camera_session_id,
+                camera_token_hash,
+                created_at,
+                expires_at,
+                last_seen_at,
+                updated_at
+              )
+              VALUES (
+                $1,
+                $2,
+                'waiting',
+                $3,
+                $4,
+                $5,
+                NOW(),
+                NOW()+($6*INTERVAL '1 minute'),
+                NOW(),
+                NOW()
+              )
+              RETURNING *
               `,
               [
                 remoteCameraId,
-
                 code,
-
                 cameraInstallationId,
-
                 cameraSessionId,
-
                 cameraTokenHash,
-
                 REMOTE_CAMERA_CODE_TTL_MINUTES,
               ]
             );
@@ -2492,10 +2636,11 @@ app.post(
             result.rows[0];
 
           break;
+
         } catch (e) {
+
           if (
-            e?.code ===
-            "23505"
+            e?.code === "23505"
           ) {
             continue;
           }
@@ -2504,13 +2649,12 @@ app.post(
         }
       }
 
-      if (
-        !inserted
-      ) {
+      if (!inserted) {
         return res
           .status(503)
           .json({
             ok: false,
+
             error:
               "unable_to_allocate_connection_code",
           });
@@ -2544,7 +2688,9 @@ app.post(
           expiresAt:
             inserted.expires_at,
         });
+
     } catch (e) {
+
       console.error(
         "Remote camera create error:",
         e
@@ -2554,6 +2700,7 @@ app.post(
         .status(500)
         .json({
           ok: false,
+
           error:
             "remote_camera_create_failed",
         });
@@ -2561,10 +2708,19 @@ app.post(
   }
 );
 
-/* ============================================================
-   REMOTE CAMERA
-   STUDIO JOINS USING CODE
-   ============================================================ */
+/*
+  STUDIO FLOW
+
+  Studio receives no pre-coded digits from the server.
+
+  User enters the 6-digit code that the CAMERA displayed.
+
+  POST /api/remote-camera/join
+
+  {
+    "code": "742918"
+  }
+*/
 
 app.post(
   "/api/remote-camera/join",
@@ -2575,8 +2731,7 @@ app.post(
     try {
       const body =
         req.body &&
-        typeof req.body ===
-          "object"
+        typeof req.body === "object"
           ? req.body
           : {};
 
@@ -2585,13 +2740,12 @@ app.post(
           body.code
         );
 
-      if (
-        !code
-      ) {
+      if (!code) {
         return res
           .status(400)
           .json({
             ok: false,
+
             error:
               "invalid_connection_code",
           });
@@ -2622,27 +2776,25 @@ app.post(
       const found =
         await client.query(
           `
-            SELECT *
-            FROM
-              kyros_remote_camera_sessions
+          SELECT *
+          FROM kyros_remote_camera_sessions
 
-            WHERE
-              connection_code=$1
-              AND status='waiting'
-              AND expires_at>NOW()
+          WHERE connection_code=$1
 
-            FOR UPDATE
+            AND status='waiting'
 
-            LIMIT 1
+            AND expires_at>NOW()
+
+          FOR UPDATE
+
+          LIMIT 1
           `,
           [
             code,
           ]
         );
 
-      if (
-        !found.rowCount
-      ) {
+      if (!found.rowCount) {
         await client.query(
           "ROLLBACK"
         );
@@ -2651,6 +2803,7 @@ app.post(
           .status(404)
           .json({
             ok: false,
+
             error:
               "connection_code_not_found_or_expired",
           });
@@ -2663,55 +2816,39 @@ app.post(
       const updated =
         await client.query(
           `
-            UPDATE
-              kyros_remote_camera_sessions
+          UPDATE kyros_remote_camera_sessions
 
-            SET
-              connection_code=
-                NULL,
+          SET
+            connection_code=NULL,
 
-              status=
-                'joined',
+            status='joined',
 
-              studio_installation_id=
-                $2,
+            studio_installation_id=$2,
 
-              studio_session_id=
-                $3,
+            studio_session_id=$3,
 
-              studio_token_hash=
-                $4,
+            studio_token_hash=$4,
 
-              joined_at=
-                NOW(),
+            joined_at=NOW(),
 
-              last_seen_at=
-                NOW(),
+            last_seen_at=NOW(),
 
-              expires_at=
-                NOW() +
-                (
-                  $5 *
-                  INTERVAL '1 hour'
-                ),
+            expires_at=
+              NOW()+(
+                $5*INTERVAL '1 hour'
+              ),
 
-              updated_at=
-                NOW()
+            updated_at=NOW()
 
-            WHERE
-              remote_camera_id=$1
+          WHERE remote_camera_id=$1
 
-            RETURNING *
+          RETURNING *
           `,
           [
             remoteCameraId,
-
             studioInstallationId,
-
             studioSessionId,
-
             studioTokenHash,
-
             REMOTE_CAMERA_SESSION_TTL_HOURS,
           ]
         );
@@ -2742,7 +2879,9 @@ app.post(
           updated.rows[0]
             .expires_at,
       });
+
     } catch (e) {
+
       try {
         await client.query(
           "ROLLBACK"
@@ -2758,18 +2897,36 @@ app.post(
         .status(500)
         .json({
           ok: false,
+
           error:
             "remote_camera_join_failed",
         });
+
     } finally {
+
       client.release();
     }
   }
 );
 
 /* ============================================================
-   ICE CONFIG
+   REMOTE CAMERA ICE CONFIG
    ============================================================ */
+
+/*
+  This endpoint is called after the peer has authenticated.
+
+  IMPORTANT:
+
+  Google STUN is always returned by default.
+
+  This means we DO NOT return:
+      ice_servers_not_configured
+
+  simply because TURN is not configured.
+
+  TURN is optional and is appended when available.
+*/
 
 app.post(
   "/api/remote-camera/ice-config",
@@ -2777,8 +2934,7 @@ app.post(
     try {
       const body =
         req.body &&
-        typeof req.body ===
-          "object"
+        typeof req.body === "object"
           ? req.body
           : {};
 
@@ -2804,13 +2960,12 @@ app.post(
           token
         );
 
-      if (
-        !session
-      ) {
+      if (!session) {
         return res
           .status(401)
           .json({
             ok: false,
+
             error:
               "unauthorized_remote_camera_peer",
           });
@@ -2820,22 +2975,6 @@ app.post(
         buildIceServers(
           remoteCameraId
         );
-
-      if (
-        !iceServers.length
-      ) {
-        return res
-          .status(503)
-          .json({
-            ok: false,
-
-            error:
-              "ice_servers_not_configured",
-
-            message:
-              "Configure STUN_HOST and/or TURN_HOST + TURN_SECRET on the server.",
-          });
-      }
 
       res.json({
         ok: true,
@@ -2847,8 +2986,16 @@ app.post(
 
         realm:
           TURN_REALM,
+
+        stunAvailable:
+          EFFECTIVE_STUN_URLS.length > 0,
+
+        turnAvailable:
+          TURN_CONFIGURED,
       });
+
     } catch (e) {
+
       console.error(
         "ICE config error:",
         e
@@ -2858,6 +3005,7 @@ app.post(
         .status(500)
         .json({
           ok: false,
+
           error:
             "ice_config_failed",
         });
@@ -2875,8 +3023,7 @@ app.patch(
     try {
       const body =
         req.body &&
-        typeof req.body ===
-          "object"
+        typeof req.body === "object"
           ? req.body
           : {};
 
@@ -2902,13 +3049,12 @@ app.patch(
           token
         );
 
-      if (
-        !session
-      ) {
+      if (!session) {
         return res
           .status(401)
           .json({
             ok: false,
+
             error:
               "unauthorized_remote_camera_peer",
           });
@@ -2942,49 +3088,47 @@ app.patch(
       const result =
         await pool.query(
           `
-            UPDATE
-              kyros_remote_camera_sessions
+          UPDATE kyros_remote_camera_sessions
 
-            SET
-              relay_used=
-                COALESCE(
-                  $2,
-                  relay_used
-                ),
+          SET
+            relay_used=
+              COALESCE(
+                $2,
+                relay_used
+              ),
 
-              selected_candidate_type=
-                COALESCE(
-                  $3,
-                  selected_candidate_type
-                ),
+            selected_candidate_type=
+              COALESCE(
+                $3,
+                selected_candidate_type
+              ),
 
-              round_trip_ms=
-                COALESCE(
-                  $4,
-                  round_trip_ms
-                ),
+            round_trip_ms=
+              COALESCE(
+                $4,
+                round_trip_ms
+              ),
 
-              packet_loss_percent=
-                COALESCE(
-                  $5,
-                  packet_loss_percent
-                ),
+            packet_loss_percent=
+              COALESCE(
+                $5,
+                packet_loss_percent
+              ),
 
-              last_seen_at=
-                NOW(),
+            last_seen_at=
+              NOW(),
 
-              updated_at=
-                NOW()
+            updated_at=
+              NOW()
 
-            WHERE
-              remote_camera_id=$1
+          WHERE remote_camera_id=$1
 
-            RETURNING
-              status,
-              relay_used,
-              selected_candidate_type,
-              round_trip_ms,
-              packet_loss_percent
+          RETURNING
+            status,
+            relay_used,
+            selected_candidate_type,
+            round_trip_ms,
+            packet_loss_percent
           `,
           [
             remoteCameraId,
@@ -2997,10 +3141,13 @@ app.patch(
 
       res.json({
         ok: true,
+
         state:
           result.rows[0],
       });
+
     } catch (e) {
+
       console.error(
         "Remote camera state error:",
         e
@@ -3010,6 +3157,7 @@ app.patch(
         .status(500)
         .json({
           ok: false,
+
           error:
             "remote_camera_state_failed",
         });
@@ -3027,8 +3175,7 @@ app.post(
     try {
       const body =
         req.body &&
-        typeof req.body ===
-          "object"
+        typeof req.body === "object"
           ? req.body
           : {};
 
@@ -3054,13 +3201,12 @@ app.post(
           token
         );
 
-      if (
-        !session
-      ) {
+      if (!session) {
         return res
           .status(401)
           .json({
             ok: false,
+
             error:
               "unauthorized_remote_camera_peer",
           });
@@ -3068,30 +3214,26 @@ app.post(
 
       await pool.query(
         `
-          UPDATE
-            kyros_remote_camera_sessions
+        UPDATE kyros_remote_camera_sessions
 
-          SET
-            connection_code=
-              NULL,
+        SET
+          connection_code=NULL,
 
-            status=
-              'cancelled',
+          status='cancelled',
 
-            disconnected_at=
-              COALESCE(
-                disconnected_at,
-                NOW()
-              ),
-
-            last_seen_at=
-              NOW(),
-
-            updated_at=
+          disconnected_at=
+            COALESCE(
+              disconnected_at,
               NOW()
+            ),
 
-          WHERE
-            remote_camera_id=$1
+          last_seen_at=
+            NOW(),
+
+          updated_at=
+            NOW()
+
+        WHERE remote_camera_id=$1
         `,
         [
           remoteCameraId,
@@ -3113,7 +3255,9 @@ app.post(
       res.json({
         ok: true,
       });
+
     } catch (e) {
+
       console.error(
         "Remote camera cancel error:",
         e
@@ -3123,6 +3267,7 @@ app.post(
         .status(500)
         .json({
           ok: false,
+
           error:
             "remote_camera_cancel_failed",
         });
@@ -3173,501 +3318,401 @@ app.get(
         issueStats,
       ] =
         await Promise.all([
+
           pool.query(
             `
-              WITH active_sessions AS (
-                SELECT *
+            WITH active_sessions AS (
+              SELECT *
+              FROM kyros_sessions
+
+              WHERE last_seen_at >
+                NOW()-(
+                  $1*INTERVAL '1 second'
+                )
+            ),
+
+            active_broadcasts AS (
+              SELECT *
+              FROM kyros_broadcasts
+
+              WHERE ended_at IS NULL
+
+                AND last_seen_at >
+                  NOW()-(
+                    $1*INTERVAL '1 second'
+                  )
+            )
+
+            SELECT
+              (
+                SELECT COUNT(*)::int
+                FROM kyros_installations
+              )
+                total_installations,
+
+              (
+                SELECT COUNT(
+                  DISTINCT installation_id
+                )::int
+                FROM active_sessions
+              )
+                active_now,
+
+              (
+                SELECT COUNT(
+                  DISTINCT installation_id
+                )::int
                 FROM kyros_sessions
-                WHERE
-                  last_seen_at >
-                  NOW() -
-                  (
-                    $1 *
-                    INTERVAL '1 second'
-                  )
-              ),
-
-              active_broadcasts AS (
-                SELECT *
-                FROM kyros_broadcasts
-                WHERE
-                  ended_at IS NULL
-                  AND last_seen_at >
-                  NOW() -
-                  (
-                    $1 *
-                    INTERVAL '1 second'
-                  )
+                WHERE last_seen_at >
+                  NOW()-INTERVAL '24 hours'
               )
+                active_24h,
 
-              SELECT
-                (
-                  SELECT COUNT(*)::int
-                  FROM kyros_installations
-                )
-                  AS total_installations,
+              (
+                SELECT COUNT(*)::int
+                FROM active_broadcasts
+              )
+                live_broadcasts,
 
-                (
-                  SELECT
-                    COUNT(
-                      DISTINCT installation_id
-                    )::int
-
-                  FROM
-                    active_sessions
-                )
-                  AS active_now,
-
-                (
-                  SELECT
-                    COUNT(
-                      DISTINCT installation_id
-                    )::int
-
-                  FROM
-                    kyros_sessions
-
-                  WHERE
-                    last_seen_at >
-                    NOW() -
-                    INTERVAL '24 hours'
-                )
-                  AS active_24h,
-
-                (
-                  SELECT
-                    COUNT(*)::int
-
-                  FROM
-                    active_broadcasts
-                )
-                  AS live_broadcasts,
-
-                (
-                  SELECT
-                    COALESCE(
-                      SUM(
-                        cardinality(
-                          destinations
-                        )
-                      ),
-                      0
-                    )::int
-
-                  FROM
-                    active_broadcasts
-                )
-                  AS live_destinations,
-
-                (
-                  SELECT
-                    COUNT(*)::int
-
-                  FROM
-                    active_sessions
-
-                  WHERE
-                    is_recording
-                )
-                  AS recording_now,
-
-                (
-                  SELECT
-                    COUNT(*)::int
-
-                  FROM
-                    active_sessions
-
-                  WHERE
-                    is_screen_sharing
-                )
-                  AS screen_sharing_now,
-
-                (
-                  SELECT
-                    COUNT(*)::int
-
-                  FROM
-                    active_sessions
-
-                  WHERE
-                    is_remote_camera
-                )
-                  AS remote_camera_feature_now,
-
-                (
-                  SELECT
-                    COUNT(*)::int
-
-                  FROM
-                    kyros_remote_camera_sessions
-
-                  WHERE
-                    status='connected'
-
-                    AND
-                    last_seen_at >
-                    NOW() -
-                    (
-                      $1 *
-                      INTERVAL '1 second'
-                    )
-                )
-                  AS remote_links_connected,
-
-                (
-                  SELECT
-                    COUNT(*)::int
-
-                  FROM
-                    kyros_issue_reports
-
-                  WHERE
-                    addressed=FALSE
-                )
-                  AS open_issues,
-
-                (
-                  SELECT
-                    COUNT(*)::int
-
-                  FROM
-                    kyros_issue_reports
-                )
-                  AS total_issues
-            `,
-            [
-              timeout,
-            ]
-          ),
-
-          pool.query(
-            `
-              SELECT
-                platform,
-
-                COUNT(*)::int
-                  AS installations,
-
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      last_seen_at >
-                      NOW() -
-                      INTERVAL '24 hours'
+              (
+                SELECT
+                  COALESCE(
+                    SUM(
+                      cardinality(
+                        destinations
+                      )
+                    ),
+                    0
                   )::int
-                  AS seen_24h
 
-              FROM
-                kyros_installations
-
-              GROUP BY
-                platform
-
-              ORDER BY
-                installations DESC,
-                platform ASC
-            `
-          ),
-
-          pool.query(
-            `
-              WITH a AS (
-                SELECT DISTINCT
-                  installation_id
-
-                FROM
-                  kyros_sessions
-
-                WHERE
-                  last_seen_at >
-                  NOW() -
-                  (
-                    $1 *
-                    INTERVAL '1 second'
-                  )
-              ),
-
-              b AS (
-                SELECT
-                  installation_id,
-
-                  COUNT(*)::int
-                    AS live_broadcasts
-
-                FROM
-                  kyros_broadcasts
-
-                WHERE
-                  ended_at IS NULL
-
-                  AND
-                  last_seen_at >
-                  NOW() -
-                  (
-                    $1 *
-                    INTERVAL '1 second'
-                  )
-
-                GROUP BY
-                  installation_id
+                FROM active_broadcasts
               )
+                live_destinations,
 
-              SELECT
-                COALESCE(
-                  i.last_network_country,
-                  'unknown'
-                )
-                  AS country,
+              (
+                SELECT COUNT(*)::int
+                FROM active_sessions
+                WHERE is_recording
+              )
+                recording_now,
 
-                COUNT(*)::int
-                  AS installations,
+              (
+                SELECT COUNT(*)::int
+                FROM active_sessions
+                WHERE is_screen_sharing
+              )
+                screen_sharing_now,
 
-                COUNT(
-                  a.installation_id
-                )::int
-                  AS active_now,
+              (
+                SELECT COUNT(*)::int
+                FROM active_sessions
+                WHERE is_remote_camera
+              )
+                remote_camera_feature_now,
 
-                COALESCE(
-                  SUM(
-                    b.live_broadcasts
-                  ),
-                  0
-                )::int
-                  AS live_broadcasts
+              (
+                SELECT COUNT(*)::int
+                FROM kyros_remote_camera_sessions
 
-              FROM
-                kyros_installations i
+                WHERE status='connected'
 
-              LEFT JOIN
-                a
+                  AND last_seen_at >
+                    NOW()-(
+                      $1*INTERVAL '1 second'
+                    )
+              )
+                remote_links_connected,
 
-                ON
-                  a.installation_id =
-                  i.installation_id
+              (
+                SELECT COUNT(*)::int
+                FROM kyros_issue_reports
+                WHERE addressed=FALSE
+              )
+                open_issues,
 
-              LEFT JOIN
-                b
-
-                ON
-                  b.installation_id =
-                  i.installation_id
-
-              GROUP BY
-                COALESCE(
-                  i.last_network_country,
-                  'unknown'
-                )
-
-              ORDER BY
-                active_now DESC,
-                installations DESC,
-                country ASC
+              (
+                SELECT COUNT(*)::int
+                FROM kyros_issue_reports
+              )
+                total_issues
             `,
             [
               timeout,
             ]
           ),
 
+          pool.query(`
+            SELECT
+              platform,
+
+              COUNT(*)::int
+                installations,
+
+              COUNT(*) FILTER (
+                WHERE last_seen_at >
+                  NOW()-INTERVAL '24 hours'
+              )::int
+                seen_24h
+
+            FROM kyros_installations
+
+            GROUP BY platform
+
+            ORDER BY
+              installations DESC,
+              platform ASC
+          `),
+
           pool.query(
             `
-              SELECT
-                COALESCE(
-                  NULLIF(
-                    model,
-                    ''
-                  ),
-                  'Unknown'
-                )
-                  AS model,
+            WITH a AS (
+              SELECT DISTINCT
+                installation_id
 
-                COALESCE(
-                  NULLIF(
-                    manufacturer,
-                    ''
-                  ),
-                  'Unknown'
+              FROM kyros_sessions
+
+              WHERE last_seen_at >
+                NOW()-(
+                  $1*INTERVAL '1 second'
                 )
-                  AS manufacturer,
+            ),
+
+            b AS (
+              SELECT
+                installation_id,
 
                 COUNT(*)::int
-                  AS installations
+                  live_broadcasts
 
-              FROM
-                kyros_installations
+              FROM kyros_broadcasts
 
-              GROUP BY
-                manufacturer,
-                model
+              WHERE ended_at IS NULL
 
-              ORDER BY
-                installations DESC
-
-              LIMIT 20
-            `
-          ),
-
-          pool.query(
-            `
-              SELECT
-                COALESCE(
-                  NULLIF(
-                    app_version,
-                    ''
-                  ),
-                  'unknown'
-                )
-                  AS app_version,
-
-                COALESCE(
-                  NULLIF(
-                    app_build,
-                    ''
-                  ),
-                  'unknown'
-                )
-                  AS app_build,
-
-                COUNT(*)::int
-                  AS installations
-
-              FROM
-                kyros_installations
-
-              GROUP BY
-                app_version,
-                app_build
-
-              ORDER BY
-                installations DESC
-
-              LIMIT 20
-            `
-          ),
-
-          pool.query(
-            `
-              WITH latest AS (
-                SELECT DISTINCT ON (
-                  s.installation_id
-                )
-                  s.installation_id,
-                  s.session_id,
-                  s.last_seen_at,
-                  s.started_at,
-                  s.app_state,
-                  s.is_foreground,
-                  s.is_broadcasting,
-                  s.is_recording,
-                  s.is_screen_sharing,
-                  s.is_remote_camera,
-                  s.network_transport,
-                  s.internet_validated,
-                  s.battery_percent,
-                  s.charging,
-                  s.power_save
-
-                FROM
-                  kyros_sessions s
-
-                WHERE
-                  s.last_seen_at >
-                  NOW() -
-                  (
-                    $1 *
-                    INTERVAL '1 second'
+                AND last_seen_at >
+                  NOW()-(
+                    $1*INTERVAL '1 second'
                   )
 
-                ORDER BY
-                  s.installation_id,
-                  s.last_seen_at DESC
+              GROUP BY installation_id
+            )
+
+            SELECT
+              COALESCE(
+                i.last_network_country,
+                'unknown'
+              )
+                country,
+
+              COUNT(*)::int
+                installations,
+
+              COUNT(
+                a.installation_id
+              )::int
+                active_now,
+
+              COALESCE(
+                SUM(
+                  b.live_broadcasts
+                ),
+                0
+              )::int
+                live_broadcasts
+
+            FROM kyros_installations i
+
+            LEFT JOIN a
+              ON a.installation_id=
+                i.installation_id
+
+            LEFT JOIN b
+              ON b.installation_id=
+                i.installation_id
+
+            GROUP BY
+              COALESCE(
+                i.last_network_country,
+                'unknown'
               )
 
-              SELECT
-                l.*,
+            ORDER BY
+              active_now DESC,
+              installations DESC,
+              country ASC
+            `,
+            [
+              timeout,
+            ]
+          ),
 
-                i.platform,
-                i.manufacturer,
-                i.brand,
-                i.model,
-                i.os_version,
-                i.os_api,
-                i.app_version,
-                i.app_build,
-                i.app_language,
-                i.device_language,
-                i.device_locale,
-                i.device_region,
-                i.timezone,
-                i.screen_width,
-                i.screen_height,
-                i.screen_density,
-                i.screen_refresh_rate,
-                i.cpu_cores,
-                i.total_memory_mb,
-                i.low_ram_device,
-                i.last_network_country,
-                i.first_seen_at,
-                i.clustered_data,
+          pool.query(`
+            SELECT
+              COALESCE(
+                NULLIF(model,''),
+                'Unknown'
+              )
+                model,
 
-                COALESCE(
-                  ab.destinations,
-                  '{}'::text[]
+              COALESCE(
+                NULLIF(manufacturer,''),
+                'Unknown'
+              )
+                manufacturer,
+
+              COUNT(*)::int
+                installations
+
+            FROM kyros_installations
+
+            GROUP BY
+              manufacturer,
+              model
+
+            ORDER BY
+              installations DESC
+
+            LIMIT 20
+          `),
+
+          pool.query(`
+            SELECT
+              COALESCE(
+                NULLIF(app_version,''),
+                'unknown'
+              )
+                app_version,
+
+              COALESCE(
+                NULLIF(app_build,''),
+                'unknown'
+              )
+                app_build,
+
+              COUNT(*)::int
+                installations
+
+            FROM kyros_installations
+
+            GROUP BY
+              app_version,
+              app_build
+
+            ORDER BY
+              installations DESC
+
+            LIMIT 20
+          `),
+
+          pool.query(
+            `
+            WITH latest AS (
+              SELECT DISTINCT ON (
+                s.installation_id
+              )
+
+                s.installation_id,
+                s.session_id,
+                s.last_seen_at,
+                s.started_at,
+                s.app_state,
+                s.is_foreground,
+                s.is_broadcasting,
+                s.is_recording,
+                s.is_screen_sharing,
+                s.is_remote_camera,
+                s.network_transport,
+                s.internet_validated,
+                s.battery_percent,
+                s.charging,
+                s.power_save
+
+              FROM kyros_sessions s
+
+              WHERE s.last_seen_at >
+                NOW()-(
+                  $1*INTERVAL '1 second'
                 )
-                  AS destinations,
-
-                ab.broadcast_id,
-
-                ab.started_at
-                  AS broadcast_started_at
-
-              FROM
-                latest l
-
-              JOIN
-                kyros_installations i
-
-                ON
-                  i.installation_id =
-                  l.installation_id
-
-              LEFT JOIN LATERAL (
-                SELECT
-                  broadcast_id,
-                  destinations,
-                  started_at
-
-                FROM
-                  kyros_broadcasts b
-
-                WHERE
-                  b.installation_id =
-                  l.installation_id
-
-                  AND
-                  b.ended_at IS NULL
-
-                  AND
-                  b.last_seen_at >
-                  NOW() -
-                  (
-                    $1 *
-                    INTERVAL '1 second'
-                  )
-
-                ORDER BY
-                  b.started_at DESC
-
-                LIMIT 1
-              ) ab
-                ON TRUE
 
               ORDER BY
-                l.is_broadcasting DESC,
-                l.is_recording DESC,
-                l.last_seen_at DESC
+                s.installation_id,
+                s.last_seen_at DESC
+            )
 
-              LIMIT $2
+            SELECT
+              l.*,
+
+              i.platform,
+              i.manufacturer,
+              i.brand,
+              i.model,
+              i.os_version,
+              i.os_api,
+              i.app_version,
+              i.app_build,
+              i.app_language,
+              i.device_language,
+              i.device_locale,
+              i.device_region,
+              i.timezone,
+              i.screen_width,
+              i.screen_height,
+              i.screen_density,
+              i.screen_refresh_rate,
+              i.cpu_cores,
+              i.total_memory_mb,
+              i.low_ram_device,
+              i.last_network_country,
+              i.first_seen_at,
+              i.clustered_data,
+
+              COALESCE(
+                ab.destinations,
+                '{}'::text[]
+              )
+                destinations,
+
+              ab.broadcast_id,
+
+              ab.started_at
+                broadcast_started_at
+
+            FROM latest l
+
+            JOIN kyros_installations i
+              ON i.installation_id=
+                l.installation_id
+
+            LEFT JOIN LATERAL (
+              SELECT
+                broadcast_id,
+                destinations,
+                started_at
+
+              FROM kyros_broadcasts b
+
+              WHERE b.installation_id=
+                l.installation_id
+
+                AND b.ended_at IS NULL
+
+                AND b.last_seen_at >
+                  NOW()-(
+                    $1*INTERVAL '1 second'
+                  )
+
+              ORDER BY
+                b.started_at DESC
+
+              LIMIT 1
+            ) ab
+              ON TRUE
+
+            ORDER BY
+              l.is_broadcasting DESC,
+              l.is_recording DESC,
+              l.last_seen_at DESC
+
+            LIMIT $2
             `,
             [
               timeout,
@@ -3677,451 +3722,388 @@ app.get(
 
           pool.query(
             `
-              SELECT
-                b.broadcast_id,
-                b.installation_id,
-                b.session_id,
-                b.destinations,
-                b.started_at,
-                b.last_seen_at,
+            SELECT
+              b.broadcast_id,
+              b.installation_id,
+              b.session_id,
+              b.destinations,
+              b.started_at,
+              b.last_seen_at,
 
-                i.platform,
-                i.model,
-                i.app_version,
-                i.last_network_country,
+              i.platform,
+              i.model,
+              i.app_version,
+              i.last_network_country,
 
-                s.network_transport,
-                s.battery_percent,
-                s.charging
+              s.network_transport,
+              s.battery_percent,
+              s.charging
 
-              FROM
-                kyros_broadcasts b
+            FROM kyros_broadcasts b
 
-              JOIN
-                kyros_installations i
+            JOIN kyros_installations i
+              ON i.installation_id=
+                b.installation_id
 
-                ON
-                  i.installation_id =
-                  b.installation_id
+            LEFT JOIN kyros_sessions s
+              ON s.session_id=
+                b.session_id
 
-              LEFT JOIN
-                kyros_sessions s
+            WHERE b.ended_at IS NULL
 
-                ON
-                  s.session_id =
-                  b.session_id
-
-              WHERE
-                b.ended_at IS NULL
-
-                AND
-                b.last_seen_at >
-                NOW() -
-                (
-                  $1 *
-                  INTERVAL '1 second'
+              AND b.last_seen_at >
+                NOW()-(
+                  $1*INTERVAL '1 second'
                 )
 
-              ORDER BY
-                b.started_at DESC
+            ORDER BY
+              b.started_at DESC
 
-              LIMIT 100
+            LIMIT 100
             `,
             [
               timeout,
             ]
           ),
 
+          pool.query(`
+            SELECT
+              r.remote_camera_id,
+              r.status,
+              r.connection_mode,
+              r.relay_used,
+              r.selected_candidate_type,
+              r.round_trip_ms,
+              r.packet_loss_percent,
+              r.created_at,
+              r.joined_at,
+              r.connected_at,
+              r.disconnected_at,
+              r.last_seen_at,
+              r.expires_at,
+              r.studio_installation_id,
+              r.camera_installation_id,
+
+              si.platform
+                studio_platform,
+
+              si.model
+                studio_model,
+
+              si.last_network_country
+                studio_country,
+
+              ci.platform
+                camera_platform,
+
+              ci.model
+                camera_model,
+
+              ci.last_network_country
+                camera_country
+
+            FROM kyros_remote_camera_sessions r
+
+            LEFT JOIN kyros_installations si
+              ON si.installation_id=
+                r.studio_installation_id
+
+            LEFT JOIN kyros_installations ci
+              ON ci.installation_id=
+                r.camera_installation_id
+
+            ORDER BY
+              r.last_seen_at DESC
+
+            LIMIT 100
+          `),
+
           pool.query(
             `
+            SELECT *
+            FROM (
               SELECT
-                r.remote_camera_id,
-                r.status,
-                r.connection_mode,
-                r.relay_used,
-                r.selected_candidate_type,
-                r.round_trip_ms,
-                r.packet_loss_percent,
-                r.created_at,
-                r.joined_at,
-                r.connected_at,
-                r.disconnected_at,
-                r.last_seen_at,
-                r.expires_at,
+                'installation'
+                  kind,
 
-                r.studio_installation_id,
-                r.camera_installation_id,
+                i.installation_id::text
+                  entity_id,
 
-                si.platform
-                  AS studio_platform,
+                i.first_seen_at
+                  occurred_at,
 
-                si.model
-                  AS studio_model,
+                i.platform,
 
-                si.last_network_country
-                  AS studio_country,
-
-                ci.platform
-                  AS camera_platform,
-
-                ci.model
-                  AS camera_model,
-
-                ci.last_network_country
-                  AS camera_country
-
-              FROM
-                kyros_remote_camera_sessions r
-
-              LEFT JOIN
-                kyros_installations si
-
-                ON
-                  si.installation_id =
-                  r.studio_installation_id
-
-              LEFT JOIN
-                kyros_installations ci
-
-                ON
-                  ci.installation_id =
-                  r.camera_installation_id
-
-              ORDER BY
-                r.last_seen_at DESC
-
-              LIMIT 100
-            `
-          ),
-
-          pool.query(
-            `
-              SELECT *
-              FROM (
-                SELECT
-                  'installation'
-                    AS kind,
-
-                  i.installation_id::text
-                    AS entity_id,
-
-                  i.first_seen_at
-                    AS occurred_at,
-
-                  i.platform,
-
-                  COALESCE(
-                    i.model,
-                    ''
-                  )
-                    AS label,
-
-                  COALESCE(
-                    i.last_network_country,
-                    ''
-                  )
-                    AS country,
-
-                  NULL::text
-                    AS detail
-
-                FROM
-                  kyros_installations i
-
-                UNION ALL
-
-                SELECT
-                  'broadcast'
-                    AS kind,
-
-                  b.broadcast_id::text,
-
-                  b.started_at,
-
-                  i.platform,
-
-                  COALESCE(
-                    i.model,
-                    ''
-                  )
-                    AS label,
-
-                  COALESCE(
-                    i.last_network_country,
-                    ''
-                  )
-                    AS country,
-
-                  array_to_string(
-                    b.destinations,
-                    ', '
-                  )
-                    AS detail
-
-                FROM
-                  kyros_broadcasts b
-
-                JOIN
-                  kyros_installations i
-
-                  ON
-                    i.installation_id =
-                    b.installation_id
-
-                UNION ALL
-
-                SELECT
-                  'issue'
-                    AS kind,
-
-                  r.issue_id::text,
-
-                  r.created_at,
-
-                  COALESCE(
-                    r.platform,
-                    'unknown'
-                  ),
-
-                  COALESCE(
-                    r.title,
-                    ''
-                  )
-                    AS label,
-
-                  COALESCE(
-                    i.last_network_country,
-                    ''
-                  )
-                    AS country,
-
-                  CASE
-                    WHEN
-                      r.addressed
-                    THEN
-                      'addressed'
-                    ELSE
-                      'open'
-                  END
-                    AS detail
-
-                FROM
-                  kyros_issue_reports r
-
-                LEFT JOIN
-                  kyros_installations i
-
-                  ON
-                    i.installation_id =
-                    r.installation_id
-
-                UNION ALL
-
-                SELECT
-                  'remote_camera'
-                    AS kind,
-
-                  e.remote_camera_id::text,
-
-                  e.created_at,
-
-                  e.peer_role,
-
-                  COALESCE(
-                    e.event_type,
-                    ''
-                  )
-                    AS label,
-
+                COALESCE(
+                  i.model,
                   ''
-                    AS country,
+                )
+                  label,
 
-                  e.details::text
-                    AS detail
+                COALESCE(
+                  i.last_network_country,
+                  ''
+                )
+                  country,
 
-                FROM
-                  kyros_remote_camera_events e
-              ) x
+                NULL::text
+                  detail
 
-              ORDER BY
-                occurred_at DESC
+              FROM kyros_installations i
 
-              LIMIT $1
+              UNION ALL
+
+              SELECT
+                'broadcast'
+                  kind,
+
+                b.broadcast_id::text,
+
+                b.started_at,
+
+                i.platform,
+
+                COALESCE(
+                  i.model,
+                  ''
+                )
+                  label,
+
+                COALESCE(
+                  i.last_network_country,
+                  ''
+                )
+                  country,
+
+                array_to_string(
+                  b.destinations,
+                  ', '
+                )
+                  detail
+
+              FROM kyros_broadcasts b
+
+              JOIN kyros_installations i
+                ON i.installation_id=
+                  b.installation_id
+
+              UNION ALL
+
+              SELECT
+                'issue'
+                  kind,
+
+                r.issue_id::text,
+
+                r.created_at,
+
+                COALESCE(
+                  r.platform,
+                  'unknown'
+                ),
+
+                COALESCE(
+                  r.title,
+                  ''
+                )
+                  label,
+
+                COALESCE(
+                  i.last_network_country,
+                  ''
+                )
+                  country,
+
+                CASE
+                  WHEN r.addressed
+                    THEN 'addressed'
+                  ELSE 'open'
+                END
+                  detail
+
+              FROM kyros_issue_reports r
+
+              LEFT JOIN kyros_installations i
+                ON i.installation_id=
+                  r.installation_id
+
+              UNION ALL
+
+              SELECT
+                'remote_camera'
+                  kind,
+
+                e.remote_camera_id::text,
+
+                e.created_at,
+
+                e.peer_role,
+
+                COALESCE(
+                  e.event_type,
+                  ''
+                )
+                  label,
+
+                ''
+                  country,
+
+                e.details::text
+                  detail
+
+              FROM kyros_remote_camera_events e
+            ) x
+
+            ORDER BY
+              occurred_at DESC
+
+            LIMIT $1
             `,
             [
               recentLimit,
             ]
           ),
 
-          pool.query(
-            `
-              WITH hours AS (
-                SELECT
-                  generate_series(
-                    date_trunc(
-                      'hour',
-                      NOW()
-                    ) -
-                    INTERVAL '23 hours',
-
-                    date_trunc(
-                      'hour',
-                      NOW()
-                    ),
-
-                    INTERVAL '1 hour'
-                  )
-                    AS hour
-              ),
-
-              counts AS (
-                SELECT
+          pool.query(`
+            WITH hours AS (
+              SELECT
+                generate_series(
                   date_trunc(
                     'hour',
-                    last_seen_at
-                  )
-                    AS hour,
+                    NOW()
+                  )-
+                    INTERVAL '23 hours',
 
-                  COUNT(*)::int
-                    AS sessions
+                  date_trunc(
+                    'hour',
+                    NOW()
+                  ),
 
-                FROM
-                  kyros_sessions
-
-                WHERE
-                  last_seen_at >=
-                  NOW() -
-                  INTERVAL '24 hours'
-
-                GROUP BY
-                  1
-              )
-
-              SELECT
-                h.hour,
-
-                COALESCE(
-                  c.sessions,
-                  0
-                )::int
-                  AS sessions
-
-              FROM
-                hours h
-
-              LEFT JOIN
-                counts c
-
-                USING (
-                  hour
+                  INTERVAL '1 hour'
                 )
+                  hour
+            ),
 
-              ORDER BY
-                h.hour
-            `
-          ),
+            counts AS (
+              SELECT
+                date_trunc(
+                  'hour',
+                  last_seen_at
+                )
+                  hour,
+
+                COUNT(*)::int
+                  sessions
+
+              FROM kyros_sessions
+
+              WHERE last_seen_at >=
+                NOW()-INTERVAL '24 hours'
+
+              GROUP BY 1
+            )
+
+            SELECT
+              h.hour,
+
+              COALESCE(
+                c.sessions,
+                0
+              )::int
+                sessions
+
+            FROM hours h
+
+            LEFT JOIN counts c
+              USING(hour)
+
+            ORDER BY
+              h.hour
+          `),
 
           pool.query(
             `
-              SELECT
-                d.destination,
+            SELECT
+              d.destination,
 
-                COUNT(*)::int
-                  AS live
+              COUNT(*)::int
+                live
 
-              FROM
-                kyros_broadcasts b
+            FROM kyros_broadcasts b
 
-              CROSS JOIN LATERAL
-                UNNEST(
-                  b.destinations
-                )
-                d(destination)
+            CROSS JOIN LATERAL
+              UNNEST(
+                b.destinations
+              )
+              d(destination)
 
-              WHERE
-                b.ended_at IS NULL
+            WHERE b.ended_at IS NULL
 
-                AND
-                b.last_seen_at >
-                NOW() -
-                (
-                  $1 *
-                  INTERVAL '1 second'
+              AND b.last_seen_at >
+                NOW()-(
+                  $1*INTERVAL '1 second'
                 )
 
-              GROUP BY
-                d.destination
+            GROUP BY
+              d.destination
 
-              ORDER BY
-                live DESC,
-                d.destination
+            ORDER BY
+              live DESC,
+              d.destination
             `,
             [
               timeout,
             ]
           ),
 
-          pool.query(
-            `
-              SELECT
-                COALESCE(
-                  NULLIF(
-                    app_language,
-                    ''
-                  ),
-                  'unknown'
-                )
-                  AS language,
+          pool.query(`
+            SELECT
+              COALESCE(
+                NULLIF(
+                  app_language,
+                  ''
+                ),
+                'unknown'
+              )
+                language,
 
-                COUNT(*)::int
-                  AS installations
+              COUNT(*)::int
+                installations
 
-              FROM
-                kyros_installations
+            FROM kyros_installations
 
-              GROUP BY
-                app_language
+            GROUP BY
+              app_language
 
-              ORDER BY
-                installations DESC
+            ORDER BY
+              installations DESC
 
-              LIMIT 20
-            `
-          ),
+            LIMIT 20
+          `),
 
-          pool.query(
-            `
-              SELECT
-                COUNT(*)::int
-                  AS total,
+          pool.query(`
+            SELECT
+              COUNT(*)::int
+                total,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      addressed=FALSE
-                  )::int
-                  AS open,
+              COUNT(*) FILTER (
+                WHERE addressed=FALSE
+              )::int
+                open,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      addressed=TRUE
-                  )::int
-                  AS addressed,
+              COUNT(*) FILTER (
+                WHERE addressed=TRUE
+              )::int
+                addressed,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      created_at >
-                      NOW() -
-                      INTERVAL '24 hours'
-                  )::int
-                  AS created_24h
+              COUNT(*) FILTER (
+                WHERE created_at >
+                  NOW()-INTERVAL '24 hours'
+              )::int
+                created_24h
 
-              FROM
-                kyros_issue_reports
-            `
-          ),
+            FROM kyros_issue_reports
+          `),
         ]);
 
       res.set(
@@ -4133,7 +4115,8 @@ app.get(
         ok: true,
 
         generatedAt:
-          new Date().toISOString(),
+          new Date()
+            .toISOString(),
 
         activeTimeoutSeconds:
           timeout,
@@ -4195,7 +4178,9 @@ app.get(
             process.version,
         },
       });
+
     } catch (e) {
+
       console.error(
         "Admin dashboard error:",
         e
@@ -4205,6 +4190,7 @@ app.get(
         .status(500)
         .json({
           ok: false,
+
           error:
             "admin_dashboard_failed",
         });
@@ -4232,210 +4218,172 @@ app.get(
         remoteCameraStats,
       ] =
         await Promise.all([
-          pool.query(
-            `
-              SELECT
-                COUNT(*)::int
-                  AS total
 
-              FROM
-                kyros_installations
-            `
-          ),
+          pool.query(`
+            SELECT
+              COUNT(*)::int
+                total
+
+            FROM kyros_installations
+          `),
 
           pool.query(
             `
-              SELECT
-                COUNT(
-                  DISTINCT installation_id
-                )::int
-                  AS total
+            SELECT
+              COUNT(
+                DISTINCT installation_id
+              )::int
+                total
 
-              FROM
-                kyros_sessions
+            FROM kyros_sessions
 
-              WHERE
-                last_seen_at >
-                NOW() -
-                (
-                  $1 *
-                  INTERVAL '1 second'
-                )
+            WHERE last_seen_at >
+              NOW()-(
+                $1*INTERVAL '1 second'
+              )
             `,
             [
               ACTIVE_TIMEOUT_SECONDS,
             ]
           ),
 
-          pool.query(
-            `
-              SELECT
-                platform,
+          pool.query(`
+            SELECT
+              platform,
 
-                COUNT(*)::int
-                  AS installations
+              COUNT(*)::int
+                installations
 
-              FROM
-                kyros_installations
+            FROM kyros_installations
 
-              GROUP BY
-                platform
+            GROUP BY platform
 
-              ORDER BY
-                installations DESC
-            `
-          ),
+            ORDER BY
+              installations DESC
+          `),
 
-          pool.query(
-            `
-              SELECT
-                COALESCE(
-                  last_network_country,
-                  'unknown'
-                )
-                  AS country,
+          pool.query(`
+            SELECT
+              COALESCE(
+                last_network_country,
+                'unknown'
+              )
+                country,
 
-                COUNT(*)::int
-                  AS installations
+              COUNT(*)::int
+                installations
 
-              FROM
-                kyros_installations
+            FROM kyros_installations
 
-              GROUP BY
-                last_network_country
+            GROUP BY
+              last_network_country
 
-              ORDER BY
-                installations DESC
-            `
-          ),
+            ORDER BY
+              installations DESC
+          `),
 
-          pool.query(
-            `
-              SELECT
-                COALESCE(
-                  app_language,
-                  'unknown'
-                )
-                  AS language,
+          pool.query(`
+            SELECT
+              COALESCE(
+                app_language,
+                'unknown'
+              )
+                language,
 
-                COUNT(*)::int
-                  AS installations
+              COUNT(*)::int
+                installations
 
-              FROM
-                kyros_installations
+            FROM kyros_installations
 
-              GROUP BY
-                app_language
+            GROUP BY
+              app_language
 
-              ORDER BY
-                installations DESC
-            `
-          ),
+            ORDER BY
+              installations DESC
+          `),
 
-          pool.query(
-            `
-              SELECT
-                COUNT(*)::int
-                  AS total
+          pool.query(`
+            SELECT
+              COUNT(*)::int
+                total
 
-              FROM
-                kyros_broadcasts
-            `
-          ),
+            FROM kyros_broadcasts
+          `),
 
-          pool.query(
-            `
-              SELECT
-                destination,
+          pool.query(`
+            SELECT
+              destination,
 
-                COUNT(*)::int
-                  AS broadcasts
+              COUNT(*)::int
+                broadcasts
 
-              FROM
-                kyros_broadcasts,
-                UNNEST(
-                  destinations
-                )
-                destination
+            FROM
+              kyros_broadcasts,
+              UNNEST(
+                destinations
+              )
+              destination
 
-              GROUP BY
-                destination
+            GROUP BY
+              destination
 
-              ORDER BY
-                broadcasts DESC
-            `
-          ),
+            ORDER BY
+              broadcasts DESC
+          `),
 
-          pool.query(
-            `
-              SELECT
-                COUNT(*)::int
-                  AS total,
+          pool.query(`
+            SELECT
+              COUNT(*)::int
+                total,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      addressed=FALSE
-                  )::int
-                  AS open,
+              COUNT(*) FILTER (
+                WHERE addressed=FALSE
+              )::int
+                open,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      addressed=TRUE
-                  )::int
-                  AS addressed
+              COUNT(*) FILTER (
+                WHERE addressed=TRUE
+              )::int
+                addressed
 
-              FROM
-                kyros_issue_reports
-            `
-          ),
+            FROM kyros_issue_reports
+          `),
 
-          pool.query(
-            `
-              SELECT
-                COUNT(*)::int
-                  AS total,
+          pool.query(`
+            SELECT
+              COUNT(*)::int
+                total,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      status='waiting'
-                  )::int
-                  AS waiting,
+              COUNT(*) FILTER (
+                WHERE status='waiting'
+              )::int
+                waiting,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      status='joined'
-                  )::int
-                  AS joined,
+              COUNT(*) FILTER (
+                WHERE status='joined'
+              )::int
+                joined,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      status='connected'
-                  )::int
-                  AS connected,
+              COUNT(*) FILTER (
+                WHERE status='connected'
+              )::int
+                connected,
 
-                COUNT(*)
-                  FILTER (
-                    WHERE
-                      relay_used=TRUE
-                  )::int
-                  AS relayed
+              COUNT(*) FILTER (
+                WHERE relay_used=TRUE
+              )::int
+                relayed
 
-              FROM
-                kyros_remote_camera_sessions
-            `
-          ),
+            FROM kyros_remote_camera_sessions
+          `),
         ]);
 
       res.json({
         ok: true,
 
         generatedAt:
-          new Date().toISOString(),
+          new Date()
+            .toISOString(),
 
         installations: {
           total:
@@ -4471,7 +4419,9 @@ app.get(
         remoteCamera:
           remoteCameraStats.rows[0],
       });
+
     } catch (e) {
+
       console.error(
         "Stats error:",
         e
@@ -4481,6 +4431,7 @@ app.get(
         .status(500)
         .json({
           ok: false,
+
           error:
             "stats_failed",
         });
@@ -4513,20 +4464,35 @@ app.get(
           "ready",
 
         turnConfigured:
-          Boolean(
-            TURN_HOST &&
-            TURN_SECRET
-          ),
+          TURN_CONFIGURED,
+
+        turnMode:
+          COTURN_CONFIGURED
+            ? "coturn-hmac"
+            : (
+                EXTERNAL_TURN_CONFIGURED
+                  ? "external"
+                  : "none"
+              ),
 
         stunConfigured:
-          Boolean(
-            STUN_HOST
-          ),
+          EFFECTIVE_STUN_URLS.length > 0,
+
+        stunProvider:
+          STUN_URLS.length
+            ? "custom"
+            : "google-public",
+
+        stunServers:
+          EFFECTIVE_STUN_URLS,
 
         serverTime:
-          new Date().toISOString(),
+          new Date()
+            .toISOString(),
       });
+
     } catch (_) {
+
       res
         .status(503)
         .json({
@@ -4543,20 +4509,28 @@ app.get(
 );
 
 /* ============================================================
-   HTTP + WEBSOCKET SERVER
+   HTTP + WEBSOCKET SIGNALING SERVER
    ============================================================ */
 
 const server =
-  http.createServer(
-    app
-  );
+  http.createServer(app);
 
 const wss =
   new WebSocketServer({
     noServer: true,
+
     maxPayload:
       64 * 1024,
   });
+
+/*
+  remoteCameraId ->
+
+  {
+    studio: WebSocket|null,
+    camera: WebSocket|null
+  }
+*/
 
 const remoteRooms =
   new Map();
@@ -4586,9 +4560,7 @@ function getRemoteRoom(
       remoteCameraId
     );
 
-  if (
-    !room
-  ) {
+  if (!room) {
     room = {
       studio: null,
       camera: null,
@@ -4612,9 +4584,7 @@ function closeRemoteRoom(
       remoteCameraId
     );
 
-  if (
-    !room
-  ) {
+  if (!room) {
     return;
   }
 
@@ -4644,6 +4614,7 @@ function closeRemoteRoom(
           1000,
           reason
         );
+
       } catch (_) {}
     }
   }
@@ -4658,37 +4629,30 @@ async function markRemoteConnected(
 ) {
   await pool.query(
     `
-      UPDATE
-        kyros_remote_camera_sessions
+    UPDATE kyros_remote_camera_sessions
 
-      SET
-        status=
-          'connected',
+    SET
+      status='connected',
 
-        connected_at=
-          COALESCE(
-            connected_at,
-            NOW()
-          ),
-
-        disconnected_at=
-          NULL,
-
-        last_seen_at=
-          NOW(),
-
-        updated_at=
+      connected_at=
+        COALESCE(
+          connected_at,
           NOW()
+        ),
 
-      WHERE
-        remote_camera_id=$1
+      disconnected_at=NULL,
 
-        AND
-        status IN (
-          'joined',
-          'disconnected',
-          'connected'
-        )
+      last_seen_at=NOW(),
+
+      updated_at=NOW()
+
+    WHERE remote_camera_id=$1
+
+      AND status IN (
+        'joined',
+        'disconnected',
+        'connected'
+      )
     `,
     [
       remoteCameraId,
@@ -4709,44 +4673,36 @@ async function markRemoteDisconnected(
 ) {
   await pool.query(
     `
-      UPDATE
-        kyros_remote_camera_sessions
+    UPDATE kyros_remote_camera_sessions
 
-      SET
-        status=
-          CASE
-            WHEN
-              status IN (
-                'cancelled',
-                'expired'
-              )
-            THEN
-              status
-            ELSE
-              'disconnected'
-          END,
+    SET
+      status=
+        CASE
+          WHEN status IN (
+            'cancelled',
+            'expired'
+          )
+            THEN status
 
-        disconnected_at=
-          CASE
-            WHEN
-              status IN (
-                'cancelled',
-                'expired'
-              )
-            THEN
-              disconnected_at
-            ELSE
-              NOW()
-          END,
+          ELSE 'disconnected'
+        END,
 
-        last_seen_at=
-          NOW(),
+      disconnected_at=
+        CASE
+          WHEN status IN (
+            'cancelled',
+            'expired'
+          )
+            THEN disconnected_at
 
-        updated_at=
-          NOW()
+          ELSE NOW()
+        END,
 
-      WHERE
-        remote_camera_id=$1
+      last_seen_at=NOW(),
+
+      updated_at=NOW()
+
+    WHERE remote_camera_id=$1
     `,
     [
       remoteCameraId,
@@ -4788,19 +4744,19 @@ server.on(
       }
 
       const remoteCameraId =
-        requestUrl.searchParams.get(
-          "session"
-        );
+        requestUrl
+          .searchParams
+          .get("session");
 
       const role =
-        requestUrl.searchParams.get(
-          "role"
-        );
+        requestUrl
+          .searchParams
+          .get("role");
 
       const token =
-        requestUrl.searchParams.get(
-          "token"
-        );
+        requestUrl
+          .searchParams
+          .get("token");
 
       const session =
         await authenticateRemotePeer(
@@ -4809,9 +4765,7 @@ server.on(
           token
         );
 
-      if (
-        !session
-      ) {
+      if (!session) {
         socket.write(
           "HTTP/1.1 401 Unauthorized\r\n\r\n"
         );
@@ -4825,7 +4779,7 @@ server.on(
         req,
         socket,
         head,
-        (ws) => {
+        ws => {
           ws.kyrosRemoteCameraId =
             remoteCameraId;
 
@@ -4842,7 +4796,9 @@ server.on(
           );
         }
       );
+
     } catch (e) {
+
       console.error(
         "WebSocket upgrade error:",
         e
@@ -4854,12 +4810,12 @@ server.on(
 );
 
 /* ============================================================
-   WEBSOCKET SIGNALING
+   WEBSOCKET CONNECTION
    ============================================================ */
 
 wss.on(
   "connection",
-  async (ws) => {
+  async ws => {
     const remoteCameraId =
       ws.kyrosRemoteCameraId;
 
@@ -4867,8 +4823,7 @@ wss.on(
       ws.kyrosRole;
 
     const otherRole =
-      role ===
-      "studio"
+      role === "studio"
         ? "camera"
         : "studio";
 
@@ -4877,16 +4832,23 @@ wss.on(
         remoteCameraId
       );
 
+    /*
+      Only one active WebSocket
+      per role.
+
+      A reconnect replaces
+      the old connection.
+    */
+
     if (
       room[role] &&
       room[role] !== ws
     ) {
       try {
-        room[role]
-          .close(
-            4001,
-            "replaced_by_reconnect"
-          );
+        room[role].close(
+          4001,
+          "replaced_by_reconnect"
+        );
       } catch (_) {}
     }
 
@@ -4895,18 +4857,13 @@ wss.on(
 
     await pool.query(
       `
-        UPDATE
-          kyros_remote_camera_sessions
+      UPDATE kyros_remote_camera_sessions
 
-        SET
-          last_seen_at=
-            NOW(),
+      SET
+        last_seen_at=NOW(),
+        updated_at=NOW()
 
-          updated_at=
-            NOW()
-
-        WHERE
-          remote_camera_id=$1
+      WHERE remote_camera_id=$1
       `,
       [
         remoteCameraId,
@@ -4931,6 +4888,10 @@ wss.on(
         role,
       }
     );
+
+    /*
+      Both peers are now present.
+    */
 
     if (
       room.studio &&
@@ -4973,7 +4934,7 @@ wss.on(
 
     ws.on(
       "message",
-      async (raw) => {
+      async raw => {
         try {
           const text =
             raw.toString();
@@ -5002,9 +4963,8 @@ wss.on(
             );
 
           if (
-            !ALLOWED_SIGNAL_TYPES.has(
-              type
-            )
+            !ALLOWED_SIGNAL_TYPES
+              .has(type)
           ) {
             sendWs(
               ws,
@@ -5021,8 +4981,7 @@ wss.on(
           }
 
           if (
-            type ===
-            "ping"
+            type === "ping"
           ) {
             sendWs(
               ws,
@@ -5045,10 +5004,7 @@ wss.on(
 
           const peer =
             currentRoom
-              ? currentRoom[
-                  otherRole
-                ]
-              : null;
+              ?.[otherRole];
 
           if (
             !peer ||
@@ -5069,10 +5025,20 @@ wss.on(
             return;
           }
 
+          /*
+            Relay signaling/control only.
+
+            Camera video/audio is NOT sent
+            through this WebSocket.
+
+            Media travels through WebRTC.
+          */
+
           sendWs(
             peer,
             {
               ...msg,
+
               from:
                 role,
             }
@@ -5080,18 +5046,14 @@ wss.on(
 
           await pool.query(
             `
-              UPDATE
-                kyros_remote_camera_sessions
+            UPDATE kyros_remote_camera_sessions
 
-              SET
-                last_seen_at=
-                  NOW(),
+            SET
+              last_seen_at=NOW(),
 
-                updated_at=
-                  NOW()
+              updated_at=NOW()
 
-              WHERE
-                remote_camera_id=$1
+            WHERE remote_camera_id=$1
             `,
             [
               remoteCameraId,
@@ -5099,8 +5061,7 @@ wss.on(
           );
 
           if (
-            type ===
-            "hangup"
+            type === "hangup"
           ) {
             await logRemoteEvent(
               remoteCameraId,
@@ -5109,7 +5070,9 @@ wss.on(
               {}
             );
           }
+
         } catch (e) {
+
           sendWs(
             ws,
             {
@@ -5141,9 +5104,7 @@ wss.on(
             null;
         }
 
-        if (
-          currentRoom
-        ) {
+        if (currentRoom) {
           sendWs(
             currentRoom[
               otherRole
@@ -5172,7 +5133,9 @@ wss.on(
             remoteCameraId,
             role
           );
+
         } catch (e) {
+
           console.warn(
             "Failed to mark remote disconnect:",
             e.message
@@ -5217,7 +5180,7 @@ const websocketHeartbeat =
   );
 
 /* ============================================================
-   REMOTE CAMERA CLEANUP
+   EXPIRED REMOTE CAMERA CLEANUP
    ============================================================ */
 
 const remoteCameraCleanup =
@@ -5225,35 +5188,27 @@ const remoteCameraCleanup =
     async () => {
       try {
         const expired =
-          await pool.query(
-            `
-              UPDATE
-                kyros_remote_camera_sessions
+          await pool.query(`
+            UPDATE kyros_remote_camera_sessions
 
-              SET
-                connection_code=
-                  NULL,
+            SET
+              connection_code=NULL,
 
-                status=
-                  'expired',
+              status='expired',
 
-                updated_at=
-                  NOW()
+              updated_at=NOW()
 
-              WHERE
-                expires_at<=NOW()
+            WHERE expires_at<=NOW()
 
-                AND
-                status IN (
-                  'waiting',
-                  'joined',
-                  'disconnected'
-                )
+              AND status IN (
+                'waiting',
+                'joined',
+                'disconnected'
+              )
 
-              RETURNING
-                remote_camera_id
-            `
-          );
+            RETURNING
+              remote_camera_id
+          `);
 
         for (
           const row of
@@ -5271,7 +5226,9 @@ const remoteCameraCleanup =
             {}
           );
         }
+
       } catch (e) {
+
         console.warn(
           "Remote camera cleanup failed:",
           e.message
@@ -5304,6 +5261,7 @@ app.use(
       .status(404)
       .json({
         ok: false,
+
         error:
           "not_found",
       });
@@ -5311,7 +5269,7 @@ app.use(
 );
 
 /* ============================================================
-   START
+   START SERVER
    ============================================================ */
 
 async function start() {
@@ -5329,21 +5287,35 @@ async function start() {
           "Remote Camera code pairing + WebRTC signaling ready."
         );
 
+        console.log(
+          `STUN configured: ${EFFECTIVE_STUN_URLS.join(", ")}`
+        );
+
         if (
-          TURN_HOST &&
-          TURN_SECRET
+          COTURN_CONFIGURED
         ) {
           console.log(
-            `TURN configured for ${TURN_HOST}`
+            `TURN configured with KyroS coturn: ${TURN_HOST}`
           );
-        } else {
+
+        } else if (
+          EXTERNAL_TURN_CONFIGURED
+        ) {
           console.log(
-            "TURN not configured yet. Set TURN_HOST and TURN_SECRET after coturn setup."
+            `TURN configured with external provider: ${TURN_URLS.join(", ")}`
+          );
+
+        } else {
+
+          console.log(
+            "TURN relay not configured. Direct WebRTC via Google STUN is enabled; add TURN later for restrictive NAT/firewall networks."
           );
         }
       }
     );
+
   } catch (e) {
+
     console.error(
       "Failed to start KyroS server:",
       e
