@@ -5445,9 +5445,9 @@ const AUTH_REFRESH_SECRET = AUTH_JWT_SECRET
   : null;
 const GOOGLE_CLIENT_IDS = new Set(
   String([
-    process.env.GOOGLE_CLIENT_IDS || "",
-    process.env.GOOGLE_WEB_CLIENT_ID || "",
-    process.env.GOOGLE_ANDROID_CLIENT_ID || "",
+    process.env.GOOGLE_CLIENT_IDS || "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com,341608273026-t9fv1o4jfq60q5mcqgantbuj66390kfr.apps.googleusercontent.com",
+    process.env.GOOGLE_WEB_CLIENT_ID || "341608273026-t9fv1o4jfq60q5mcqgantbuj66390kfr.apps.googleusercontent.com",
+    process.env.GOOGLE_ANDROID_CLIENT_ID || "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com",
   ].join(","))
     .split(",")
     .map(value => value.trim())
