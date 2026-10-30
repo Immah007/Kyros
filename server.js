@@ -749,7 +749,7 @@ async function initializeDatabase() {
         user_name VARCHAR(160) NOT NULL,
         user_email VARCHAR(320) NOT NULL,
         amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
-        currency VARCHAR(3) NOT NULL DEFAULT 'KES'
+        currency VARCHAR(3) NOT NULL DEFAULT 'USD'
           CHECK (currency ~ '^[A-Z]{3}$'),
         payment_method VARCHAR(40) NOT NULL,
         transaction_reference VARCHAR(200),
@@ -768,6 +768,8 @@ async function initializeDatabase() {
         )
       )
     `);
+
+    await client.query(`ALTER TABLE payments ALTER COLUMN currency SET DEFAULT 'USD'`);
 
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_transaction_reference
@@ -5423,7 +5425,7 @@ const OTP_RESEND_COOLDOWN_SECONDS = 60;
 const OTP_MAX_ATTEMPTS = 5;
 const PASSWORD_RESET_TOKEN_TTL_SECONDS = 10 * 60;
 const FREE_TRIAL_DURATION_DAYS = 7;
-const SUBSCRIPTION_CURRENCY = String(process.env.KYROS_CURRENCY || "KES").trim().toUpperCase();
+const SUBSCRIPTION_CURRENCY = "USD"; // KyroS Pro public pricing is denominated in USD.
 const PAYMENT_SIMULATION_ENABLED =
   String(process.env.PAYMENT_SIMULATION_ENABLED || "false").toLowerCase() === "true" &&
   String(process.env.NODE_ENV || "development").toLowerCase() !== "production" &&
@@ -5432,11 +5434,23 @@ const PAYMENT_SIMULATION_ENABLED =
   DATABASE_URL.length > 0 &&
   !IS_KNOWN_PRODUCTION_DATABASE;
 const SUBSCRIPTION_CYCLES = Object.freeze({
-  monthly: { durationMonths: 1, priceEnv: "KYROS_PRO_MONTHLY_PRICE", label: "Monthly" },
-  quarterly: { durationMonths: 3, priceEnv: "KYROS_PRO_QUARTERLY_PRICE", label: "Quarterly" },
-  yearly: { durationMonths: 12, priceEnv: "KYROS_PRO_YEARLY_PRICE", label: "Yearly" },
+  monthly: Object.freeze({
+    durationMonths: 1, amount: 6, monthlyPrice: 6, regularPrice: 8,
+    savingsAmount: 2, discountPercent: 25, label: "Monthly", badge: "FLEXIBLE",
+    billingDescription: "Billed monthly",
+  }),
+  quarterly: Object.freeze({
+    durationMonths: 3, amount: 15, monthlyPrice: 5, regularPrice: 24,
+    savingsAmount: 9, discountPercent: 37.5, label: "Quarterly", badge: "MOST POPULAR",
+    billingDescription: "Billed every 3 months",
+  }),
+  yearly: Object.freeze({
+    durationMonths: 12, amount: 48, monthlyPrice: 4, regularPrice: 96,
+    savingsAmount: 48, discountPercent: 50, label: "Yearly", badge: "BEST VALUE",
+    billingDescription: "Billed yearly",
+  }),
 });
-const AUTH_JWT_SECRET = "9f3e4b7c1a8d5e6f0b2c3a4f5e6d7c8b9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d"; //  String(process.env.AUTH_JWT_SECRET || "");
+const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
 const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
   : null;
@@ -6710,36 +6724,43 @@ app.get("/api/subscription", requireAuth, (req, res) => {
 
 function subscriptionPriceForCycle(cycle) {
   const definition = SUBSCRIPTION_CYCLES[cycle];
-  if (!definition) return null;
-  const raw = process.env[definition.priceEnv];
-  if (raw == null || String(raw).trim() === "") return null;
-  const amount = Number(raw);
-  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+  return definition ? definition.amount : null;
 }
 
 function publicSubscriptionPlans() {
-  return Object.entries(SUBSCRIPTION_CYCLES).map(([billingCycle, definition]) => {
-    const price = subscriptionPriceForCycle(billingCycle);
-    return {
-      id: billingCycle,
-      plan: "pro",
-      name: definition.label,
-      billingCycle,
-      durationMonths: definition.durationMonths,
-      price,
-      amount: price,
-      currency: /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES",
-      priceConfigured: price !== null,
-      paymentMethods: ["mpesa", "pesapal", "card"],
-    };
-  });
+  return Object.entries(SUBSCRIPTION_CYCLES).map(([billingCycle, definition]) => ({
+    id: billingCycle,
+    plan: "pro",
+    name: definition.label,
+    billingCycle,
+    durationMonths: definition.durationMonths,
+    price: definition.amount,
+    amount: definition.amount,
+    monthlyPrice: definition.monthlyPrice,
+    regularPrice: definition.regularPrice,
+    regularMonthlyPrice: 8,
+    savingsAmount: definition.savingsAmount,
+    discountPercent: definition.discountPercent,
+    badge: definition.badge,
+    billingDescription: definition.billingDescription,
+    currency: SUBSCRIPTION_CURRENCY,
+    priceConfigured: true,
+    pricingReference: "standard_monthly_rate",
+    paymentMethods: [
+      { id: "mpesa", name: "M-Pesa", status: "provider_integration_pending" },
+      { id: "airtel", name: "Airtel Money", status: "provider_integration_pending" },
+      { id: "card", name: "Credit or debit card", status: "provider_integration_pending" },
+      { id: "google_pay", name: "Google Pay", status: "coming_soon" },
+    ],
+  }));
 }
 
 app.get("/api/subscription/plans", (req, res) => {
   return res.json({
     ok: true,
     plans: publicSubscriptionPlans(),
-    currency: /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES",
+    currency: SUBSCRIPTION_CURRENCY,
+    pricingReference: { monthlyStandardRate: 8, currency: SUBSCRIPTION_CURRENCY },
   });
 });
 
@@ -6767,14 +6788,14 @@ async function startSubscriptionCheckout(req, res) {
       message: "The selected billing cycle determines the subscription duration. Please select the matching cycle.",
     });
   }
-  if (!["mpesa", "pesapal", "card"].includes(paymentMethod)) {
-    return res.status(400).json({ ok: false, error: "invalid_payment_method", message: "Choose M-Pesa, Pesapal or card checkout." });
+  if (!["mpesa", "airtel", "pesapal", "card"].includes(paymentMethod)) {
+    return res.status(400).json({ ok: false, error: "invalid_payment_method", message: "Choose M-Pesa, Airtel Money or card checkout. Google Pay is not available yet." });
   }
   if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) {
     return res.status(400).json({ ok: false, error: "invalid_request_id", message: "A valid checkout request ID is required. Please retry from the app." });
   }
-  if (paymentMethod === "mpesa" && !/^\+?[0-9][0-9\s()-]{6,19}$/.test(phoneNumber)) {
-    return res.status(400).json({ ok: false, error: "invalid_phone_number", message: "Enter a valid M-Pesa phone number." });
+  if (["mpesa", "airtel"].includes(paymentMethod) && !/^\+?[0-9][0-9\s()-]{6,19}$/.test(phoneNumber)) {
+    return res.status(400).json({ ok: false, error: "invalid_phone_number", message: `Enter a valid ${paymentMethod === "mpesa" ? "M-Pesa" : "Airtel Money"} phone number.` });
   }
 
   // The current release has no live payment-provider integration. Simulated
@@ -6789,7 +6810,7 @@ async function startSubscriptionCheckout(req, res) {
 
   const configuredPrice = subscriptionPriceForCycle(billingCycle);
   const amount = configuredPrice === null ? 0 : configuredPrice;
-  const currency = /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES";
+  const currency = /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "USD";
   const metadataInput = body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
     ? body.metadata : {};
   // Never accept PAN, CVV, PIN, expiry or other raw card credentials.
@@ -6877,7 +6898,7 @@ async function startSubscriptionCheckout(req, res) {
       durationMonths: cycle.durationMonths,
       paymentMethod,
       requestId: idempotencyKey,
-      ...(paymentMethod === "mpesa" ? { phoneNumber } : {}),
+      ...(["mpesa", "airtel"].includes(paymentMethod) ? { phoneNumber } : {}),
       ...safeMetadata,
     };
     const paymentResult = await client.query(
