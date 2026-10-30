@@ -8,6 +8,7 @@ const { WebSocketServer, WebSocket } = require("ws");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const { OAuth2Client } = require("google-auth-library");
+const nodemailer = require("nodemailer");
 
 const app = express();
 app.set("trust proxy", true);
@@ -679,6 +680,44 @@ async function initializeDatabase() {
           OR subscription_end >= subscription_start
         )
       )
+    `);
+
+    // Additive account fields: NULL/{} means no free trial has ever been used.
+    // Existing user rows and all pre-existing KyroS tables are preserved.
+    await client.query(`
+      ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS free_trial_used JSONB DEFAULT NULL
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS kyros_auth_otps (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        user_id VARCHAR(40) NOT NULL
+          REFERENCES users(id) ON DELETE CASCADE,
+        email VARCHAR(320) NOT NULL,
+        purpose VARCHAR(32) NOT NULL
+          CHECK (purpose IN ('email_verification', 'password_reset')),
+        code_hash CHAR(64) NOT NULL,
+        expires_at TIMESTAMPTZ NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        max_attempts INTEGER NOT NULL DEFAULT 5 CHECK (max_attempts BETWEEN 1 AND 10),
+        sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        used_at TIMESTAMPTZ,
+        reset_token_hash CHAR(64),
+        reset_token_expires_at TIMESTAMPTZ,
+        reset_token_used_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_kyros_auth_otps_user_purpose
+      ON kyros_auth_otps (user_id, purpose, created_at DESC)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_kyros_auth_otps_email_purpose
+      ON kyros_auth_otps (LOWER(email), purpose, created_at DESC)
     `);
 
     await client.query(`
@@ -5364,6 +5403,11 @@ const AUTH_AUDIENCE = "kyros-api";
 const AUTH_ACCESS_TTL_SECONDS = 15 * 60;
 const AUTH_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
 const AUTH_MAX_SESSIONS_PER_USER = 10;
+const OTP_TTL_SECONDS = 10 * 60;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
+const OTP_MAX_ATTEMPTS = 5;
+const PASSWORD_RESET_TOKEN_TTL_SECONDS = 10 * 60;
+const FREE_TRIAL_DURATION_DAYS = 7;
 const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
 const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
@@ -5372,14 +5416,21 @@ const AUTH_REFRESH_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-refresh-v1").digest()
   : null;
 const GOOGLE_CLIENT_IDS = new Set(
-  String(process.env.GOOGLE_CLIENT_IDS || "")
+  String([
+    process.env.GOOGLE_CLIENT_IDS || "",
+    process.env.GOOGLE_WEB_CLIENT_ID || "",
+    process.env.GOOGLE_ANDROID_CLIENT_ID || "",
+  ].join(","))
     .split(",")
     .map(value => value.trim())
     .filter(Boolean)
 );
 
 function authConfigured(req, res, next) {
-  if (!AUTH_ACCESS_SECRET || !AUTH_REFRESH_SECRET || Buffer.byteLength(AUTH_JWT_SECRET, "utf8") < 64) {
+  if (
+    !AUTH_ACCESS_SECRET || !AUTH_REFRESH_SECRET ||
+    Buffer.byteLength(AUTH_JWT_SECRET, "utf8") < 64
+  ) {
     return res.status(503).json({
       ok: false,
       error: "authentication_not_configured",
@@ -5396,9 +5447,7 @@ function createPublicId(prefix) {
 function normalizeEmail(value) {
   if (typeof value !== "string") return null;
   const email = value.trim().toLowerCase();
-  if (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return null;
-  }
+  if (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
   return email;
 }
 
@@ -5416,7 +5465,7 @@ async function hashPassword(password) {
 }
 
 // Compatibility for accounts created by the previous pre-release backend.
-// New accounts always use bcrypt; a successful legacy login is upgraded.
+// New passwords are bcrypt-hashed; successful legacy logins are upgraded.
 const scryptAsync = (password, salt, keyLength, options) =>
   new Promise((resolve, reject) => {
     crypto.scrypt(password, salt, keyLength, options, (error, derivedKey) => {
@@ -5456,12 +5505,8 @@ async function verifyLegacyScryptPassword(password, encoded) {
 
 async function verifyPassword(password, encoded) {
   if (typeof encoded !== "string") return false;
-  if (/^\$2[aby]\$/.test(encoded)) {
-    return bcrypt.compare(password, encoded);
-  }
-  if (encoded.startsWith("scrypt$")) {
-    return verifyLegacyScryptPassword(password, encoded);
-  }
+  if (/^\$2[aby]\$/.test(encoded)) return bcrypt.compare(password, encoded);
+  if (encoded.startsWith("scrypt$")) return verifyLegacyScryptPassword(password, encoded);
   return false;
 }
 
@@ -5475,9 +5520,7 @@ function signJwt(payload, secret, ttlSeconds) {
 }
 
 function verifyJwt(token, secret, expectedUse) {
-  if (typeof token !== "string" || token.length > 8192) {
-    throw new Error("invalid_token");
-  }
+  if (typeof token !== "string" || token.length > 8192) throw new Error("invalid_token");
   try {
     const claims = jwt.verify(token, secret, {
       algorithms: ["HS256"],
@@ -5491,9 +5534,7 @@ function verifyJwt(token, secret, expectedUse) {
       typeof claims.sub !== "string" ||
       typeof claims.sid !== "string" ||
       typeof claims.jti !== "string"
-    ) {
-      throw new Error("invalid_token");
-    }
+    ) throw new Error("invalid_token");
     return claims;
   } catch (_) {
     throw new Error("invalid_token");
@@ -5502,6 +5543,12 @@ function verifyJwt(token, secret, expectedUse) {
 
 function sha256Hex(value) {
   return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function otpDigest(email, purpose, code) {
+  return crypto.createHmac("sha256", AUTH_JWT_SECRET)
+    .update(`${purpose}:${email}:${code}`)
+    .digest("hex");
 }
 
 function timingSafeStringEqual(left, right) {
@@ -5524,21 +5571,80 @@ function safeJsonArray(value) {
   return [];
 }
 
-function publicSubscription(user) {
-  let data = user.subscription_data || {};
-  if (typeof data === "string") {
-    try { data = JSON.parse(data); } catch (_) { data = {}; }
+function parseJsonObject(value) {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+    } catch (_) {
+      return null;
+    }
   }
+  return null;
+}
+
+function storedFreeTrial(user) {
+  const value = parseJsonObject(user && user.free_trial_used);
+  return value && Object.keys(value).length > 0 ? value : null;
+}
+
+function publicFreeTrial(user) {
+  const trial = storedFreeTrial(user);
+  if (!trial) return null;
+  const result = { ...trial };
+  const endValue = result.endsAt || result.ends_at || result.endDate || null;
+  const endTime = endValue ? Date.parse(endValue) : NaN;
+  if (Number.isFinite(endTime) && endTime <= Date.now() && result.status !== "revoked") {
+    result.status = "expired";
+  }
+  return result;
+}
+
+function publicSubscription(user) {
+  let data = parseJsonObject(user && user.subscription_data) || {};
+  const storedPlan = typeof data.plan === "string" ? data.plan.toLowerCase() : "free";
+  let plan = storedPlan;
+  let status = user && user.subscription_status ? user.subscription_status : "free";
+  let startDate = user && user.subscription_start ? user.subscription_start : null;
+  let endDate = user && user.subscription_end ? user.subscription_end : null;
+  let accessType = plan === "pro" || plan === "professional" ? "paid" : "free";
+  const trial = publicFreeTrial(user || {});
+  const trialEnd = trial && Date.parse(trial.endsAt || trial.ends_at || "");
+  const trialActive = Boolean(
+    trial && trial.status !== "revoked" && Number.isFinite(trialEnd) && trialEnd > Date.now()
+  );
+  const paidActive = (plan === "pro" || plan === "professional") &&
+    status === "active" && (!endDate || Date.parse(endDate) > Date.now());
+
+  if (paidActive) {
+    accessType = "paid";
+  } else if (trialActive) {
+    plan = "pro";
+    status = "active";
+    startDate = trial.startedAt || trial.startDate || null;
+    endDate = trial.endsAt || trial.endDate || null;
+    accessType = "free_trial";
+  } else if (status === "active" && endDate && Date.parse(endDate) <= Date.now()) {
+    status = "expired";
+  }
+
   return {
-    plan: typeof data.plan === "string" ? data.plan : "free",
-    status: user.subscription_status || "free",
-    startDate: user.subscription_start || null,
-    endDate: user.subscription_end || null,
-    autoRenew: Boolean(user.auto_renew),
+    plan,
+    status,
+    startDate,
+    endDate,
+    autoRenew: Boolean(user && user.auto_renew),
+    accessType,
+    isTrialActive: trialActive && !paidActive,
+    canStartFreeTrial: !trial,
+    freeTrial: trial,
   };
 }
 
 function publicUser(user) {
+  const trial = publicFreeTrial(user || {});
+  const trialUsed = Boolean(storedFreeTrial(user || {}));
   return {
     id: user.id,
     name: user.name,
@@ -5552,6 +5658,10 @@ function publicUser(user) {
     phoneVerified: Boolean(user.phone_verified),
     country: user.country || null,
     profileImage: user.profile_image || null,
+    freeTrialUsed: trialUsed,
+    hasUsedFreeTrial: trialUsed,
+    canStartFreeTrial: !trialUsed,
+    freeTrial: trial,
     createdAt: user.created_at,
     lastLoginAt: user.last_login_at || null,
   };
@@ -5565,14 +5675,10 @@ function createTokenPair(user, sessionId) {
     jti: crypto.randomUUID(),
   };
   const accessToken = signJwt(
-    { ...common, token_use: "access" },
-    AUTH_ACCESS_SECRET,
-    AUTH_ACCESS_TTL_SECONDS
+    { ...common, token_use: "access" }, AUTH_ACCESS_SECRET, AUTH_ACCESS_TTL_SECONDS
   );
   const refreshToken = signJwt(
-    { ...common, token_use: "refresh" },
-    AUTH_REFRESH_SECRET,
-    AUTH_REFRESH_TTL_SECONDS
+    { ...common, token_use: "refresh" }, AUTH_REFRESH_SECRET, AUTH_REFRESH_TTL_SECONDS
   );
   return { accessToken, refreshToken };
 }
@@ -5592,8 +5698,7 @@ async function createStoredSession(client, userId) {
   const now = Date.now();
   let sessions = safeJsonArray(user.refresh_sessions).filter(session =>
     session && typeof session.sid === "string" &&
-    typeof session.expiresAt === "string" &&
-    Date.parse(session.expiresAt) > now
+    typeof session.expiresAt === "string" && Date.parse(session.expiresAt) > now
   );
   while (sessions.length >= AUTH_MAX_SESSIONS_PER_USER) sessions.shift();
   const sid = crypto.randomUUID();
@@ -5605,10 +5710,7 @@ async function createStoredSession(client, userId) {
     createdAt: new Date(now).toISOString(),
   });
   await client.query(
-    `UPDATE users
-        SET refresh_sessions = $2::jsonb,
-            updated_at = NOW()
-      WHERE id = $1`,
+    `UPDATE users SET refresh_sessions = $2::jsonb, updated_at = NOW() WHERE id = $1`,
     [userId, JSON.stringify(sessions)]
   );
   return tokens;
@@ -5628,9 +5730,7 @@ function authRateLimit(options = {}) {
     }
     bucket.count += 1;
     if (buckets.size > 10000) {
-      for (const [ip, entry] of buckets) {
-        if (entry.resetAt <= now) buckets.delete(ip);
-      }
+      for (const [ip, entry] of buckets) if (entry.resetAt <= now) buckets.delete(ip);
     }
     res.set("RateLimit-Limit", String(max));
     res.set("RateLimit-Remaining", String(Math.max(0, max - bucket.count)));
@@ -5649,6 +5749,8 @@ function authRateLimit(options = {}) {
 const loginRateLimit = authRateLimit({ max: 10 });
 const signupRateLimit = authRateLimit({ max: 5 });
 const googleRateLimit = authRateLimit({ max: 15 });
+const otpRateLimit = authRateLimit({ max: 5, windowMs: 15 * 60 * 1000 });
+const passwordResetRateLimit = authRateLimit({ max: 5, windowMs: 15 * 60 * 1000 });
 
 async function requireAuth(req, res, next) {
   if (!AUTH_ACCESS_SECRET || !AUTH_REFRESH_SECRET || Buffer.byteLength(AUTH_JWT_SECRET, "utf8") < 64) {
@@ -5661,19 +5763,16 @@ async function requireAuth(req, res, next) {
   try {
     const authorization = String(req.headers.authorization || "");
     const match = authorization.match(/^Bearer\s+(.+)$/i);
-    if (!match) {
-      return res.status(401).json({ ok: false, error: "authentication_required" });
-    }
+    if (!match) return res.status(401).json({ ok: false, error: "authentication_required" });
     const claims = verifyJwt(match[1], AUTH_ACCESS_SECRET, "access");
     const result = await pool.query(
       `SELECT id, name, email, phone_number, sign_in_method, role,
               account_status, subscription_status, subscription_start,
               subscription_end, auto_renew, subscription_data,
               email_verified, phone_verified, country, profile_image,
-              created_at, last_login_at, token_version,
+              free_trial_used, created_at, last_login_at, token_version,
               EXISTS (
-                SELECT 1
-                  FROM jsonb_array_elements(refresh_sessions) AS session
+                SELECT 1 FROM jsonb_array_elements(refresh_sessions) AS session
                  WHERE session->>'sid' = $2
                    AND (session->>'expiresAt')::timestamptz > NOW()
               ) AS session_active
@@ -5682,17 +5781,13 @@ async function requireAuth(req, res, next) {
         LIMIT 1`,
       [claims.sub, claims.sid]
     );
-    if (result.rowCount !== 1) {
-      return res.status(401).json({ ok: false, error: "invalid_session" });
-    }
+    if (result.rowCount !== 1) return res.status(401).json({ ok: false, error: "invalid_session" });
     const user = result.rows[0];
     if (
       user.account_status !== "active" ||
       Number(user.token_version) !== Number(claims.ver) ||
       !user.session_active
-    ) {
-      return res.status(401).json({ ok: false, error: "session_expired" });
-    }
+    ) return res.status(401).json({ ok: false, error: "session_expired" });
     req.auth = { claims, user };
     return next();
   } catch (error) {
@@ -5717,7 +5812,6 @@ async function verifyGoogleIdToken(idToken) {
     error.statusCode = 401;
     throw error;
   }
-
   let payload;
   try {
     const ticket = await googleAuthClient.verifyIdToken({
@@ -5726,38 +5820,29 @@ async function verifyGoogleIdToken(idToken) {
     });
     payload = ticket.getPayload();
   } catch (verificationError) {
-    const networkFailure = Boolean(
-      verificationError && (
-        verificationError.code === "ECONNRESET" ||
-        verificationError.code === "ECONNREFUSED" ||
-        verificationError.code === "ETIMEDOUT" ||
-        verificationError.code === "EAI_AGAIN" ||
-        verificationError.code === "ENOTFOUND" ||
-        verificationError.code === "ECONNABORTED" ||
-        verificationError.response
-      )
-    );
+    const networkFailure = Boolean(verificationError && (
+      verificationError.code === "ECONNRESET" || verificationError.code === "ECONNREFUSED" ||
+      verificationError.code === "ETIMEDOUT" || verificationError.code === "EAI_AGAIN" ||
+      verificationError.code === "ENOTFOUND" || verificationError.code === "ECONNABORTED" ||
+      verificationError.response
+    ));
     const error = new Error(networkFailure ? "google_keys_unavailable" : "invalid_google_token");
     error.statusCode = networkFailure ? 503 : 401;
     throw error;
   }
-
   const email = normalizeEmail(payload && payload.email);
   const emailVerified = payload && (
     payload.email_verified === true || payload.email_verified === "true"
   );
   const authorizedPartyValid = !payload || !payload.azp || GOOGLE_CLIENT_IDS.has(payload.azp);
-
   if (
-    !payload ||
-    typeof payload.sub !== "string" || payload.sub.length < 5 || payload.sub.length > 255 ||
-    !email || !emailVerified || !authorizedPartyValid
+    !payload || typeof payload.sub !== "string" || payload.sub.length < 5 ||
+    payload.sub.length > 255 || !email || !emailVerified || !authorizedPartyValid
   ) {
     const error = new Error("invalid_google_token");
     error.statusCode = 401;
     throw error;
   }
-
   let picture = null;
   if (typeof payload.picture === "string" && payload.picture.length <= 2048) {
     try {
@@ -5767,7 +5852,6 @@ async function verifyGoogleIdToken(idToken) {
       picture = null;
     }
   }
-
   return {
     sub: payload.sub,
     email,
@@ -5781,14 +5865,217 @@ async function verifyGoogleIdToken(idToken) {
 function authErrorResponse(res, error, fallback = "authentication_failed") {
   const status = Number.isInteger(error.statusCode) ? error.statusCode : 500;
   const known = new Set([
-    "google_sign_in_not_configured",
-    "invalid_google_token",
-    "google_keys_unavailable",
-    "google_keys_invalid",
-    "account_unavailable",
+    "google_sign_in_not_configured", "invalid_google_token", "google_keys_unavailable",
+    "google_keys_invalid", "account_unavailable", "email_delivery_not_configured",
+    "email_delivery_failed", "otp_resend_too_soon",
   ]);
   const code = known.has(error.message) ? error.message : fallback;
-  return res.status(status).json({ ok: false, error: code });
+  const messages = {
+    google_sign_in_not_configured: "Google Sign-In is not configured on the server.",
+    invalid_google_token: "Google could not verify this sign-in. Please try again.",
+    google_keys_unavailable: "Google verification is temporarily unavailable.",
+    email_delivery_not_configured: "Email delivery is not configured on the server.",
+    email_delivery_failed: "The verification email could not be sent. Please try again shortly.",
+    otp_resend_too_soon: "Please wait before requesting another code.",
+    account_unavailable: "This account is unavailable.",
+  };
+  return res.status(status).json({ ok: false, error: code, message: messages[code] || "The authentication request could not be completed." });
+}
+
+function escapeHtml(value) {
+  return String(value || "").replace(/[&<>"']/g, character => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[character]);
+}
+
+function smtpConfiguration() {
+  const host = String(process.env.SMTP_HOST || "").trim();
+  const port = Number(process.env.SMTP_PORT || 587);
+  const from = String(process.env.SMTP_FROM || process.env.MAIL_FROM || "").trim();
+  const user = String(process.env.SMTP_USER || "").trim();
+  const pass = String(process.env.SMTP_PASS || "");
+  if (!host || !Number.isInteger(port) || port < 1 || port > 65535 || !from || Boolean(user) !== Boolean(pass)) {
+    return null;
+  }
+  return {
+    host,
+    port,
+    secure: String(process.env.SMTP_SECURE || (port === 465 ? "true" : "false")).toLowerCase() === "true",
+    auth: user ? { user, pass } : undefined,
+    from,
+    replyTo: String(process.env.SMTP_REPLY_TO || "").trim() || undefined,
+  };
+}
+
+let mailTransporter = null;
+let mailTransporterKey = null;
+
+function getMailTransporter() {
+  const config = smtpConfiguration();
+  if (!config) {
+    const error = new Error("email_delivery_not_configured");
+    error.statusCode = 503;
+    throw error;
+  }
+  const key = JSON.stringify({
+    host: config.host, port: config.port, secure: config.secure,
+    user: config.auth && config.auth.user, from: config.from,
+  });
+  if (!mailTransporter || mailTransporterKey !== key) {
+    mailTransporter = nodemailer.createTransport({
+      host: config.host,
+      port: config.port,
+      secure: config.secure,
+      auth: config.auth,
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
+      pool: true,
+      maxConnections: 3,
+      maxMessages: 100,
+    });
+    mailTransporterKey = key;
+  }
+  return { transporter: mailTransporter, config };
+}
+
+async function sendOtpEmail({ email, name, code, purpose }) {
+  const { transporter, config } = getMailTransporter();
+  const displayName = escapeHtml(name || "KyroS Creator");
+  const isReset = purpose === "password_reset";
+  const subject = isReset ? "Your KyroS password reset code" : "Verify your KyroS email address";
+  const heading = isReset ? "Reset your password" : "Verify your email";
+  const instruction = isReset
+    ? "Use this one-time code to continue resetting your KyroS password."
+    : "Use this one-time code to verify your email address and activate your KyroS account.";
+  const text = `Hello ${name || "KyroS Creator"},\n\n${instruction}\n\nYour verification code is: ${code}\n\nThis code expires in 10 minutes and can only be used once. If you did not request this, you can ignore this email.\n\nKyroS Support`;
+  const html = `<!doctype html><html><body style="margin:0;padding:32px;background:#0a0e16;color:#f4f5fb;font-family:Arial,sans-serif"><div style="max-width:520px;margin:auto;padding:32px;background:#121827;border:1px solid #273149;border-radius:14px"><div style="font-size:13px;letter-spacing:3px;color:#a89cff;font-weight:bold">KYROS</div><h1 style="font-size:25px;margin:24px 0 12px">${heading}</h1><p style="color:#c4cada;line-height:1.6">Hello ${displayName}, ${instruction}</p><div style="margin:28px 0;padding:18px;text-align:center;background:#0a0e16;border:1px solid #343d59;border-radius:10px;font-size:32px;letter-spacing:9px;font-weight:bold">${code}</div><p style="color:#aeb6c8;line-height:1.6">This code expires in <strong>10 minutes</strong> and can only be used once. If you did not request this, you can safely ignore this email.</p><p style="margin-top:28px;color:#a89cff">KyroS Support</p></div></body></html>`;
+  await transporter.sendMail({
+    from: config.from,
+    to: email,
+    replyTo: config.replyTo,
+    subject,
+    text,
+    html,
+  });
+}
+
+async function issueEmailOtp({ userId, email, name, purpose }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !["email_verification", "password_reset"].includes(purpose)) {
+    throw new Error("invalid_otp_request");
+  }
+  // Fail before creating a code if SMTP is not configured.
+  getMailTransporter();
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+  const codeHash = otpDigest(normalizedEmail, purpose, code);
+  const client = await pool.connect();
+  let otpId = null;
+  try {
+    await client.query("BEGIN");
+    const recent = await client.query(
+      `SELECT id FROM kyros_auth_otps
+        WHERE user_id = $1 AND purpose = $2
+          AND created_at > NOW() - ($3::text || ' seconds')::interval
+        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+      [userId, purpose, OTP_RESEND_COOLDOWN_SECONDS]
+    );
+    if (recent.rowCount) {
+      await client.query("ROLLBACK");
+      const error = new Error("otp_resend_too_soon");
+      error.statusCode = 429;
+      throw error;
+    }
+    await client.query(
+      `UPDATE kyros_auth_otps SET used_at = COALESCE(used_at, NOW())
+        WHERE user_id = $1 AND purpose = $2 AND used_at IS NULL`,
+      [userId, purpose]
+    );
+    const inserted = await client.query(
+      `INSERT INTO kyros_auth_otps
+         (user_id, email, purpose, code_hash, expires_at, max_attempts)
+       VALUES ($1, $2, $3, $4, NOW() + ($5::text || ' seconds')::interval, $6)
+       RETURNING id`,
+      [userId, normalizedEmail, purpose, codeHash, OTP_TTL_SECONDS, OTP_MAX_ATTEMPTS]
+    );
+    otpId = inserted.rows[0].id;
+    await client.query("COMMIT");
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw error;
+  } finally {
+    client.release();
+  }
+  try {
+    await sendOtpEmail({ email: normalizedEmail, name, code, purpose });
+  } catch (error) {
+    await pool.query(
+      `UPDATE kyros_auth_otps SET used_at = COALESCE(used_at, NOW()) WHERE id = $1`,
+      [otpId]
+    ).catch(() => {});
+    if (error.message === "email_delivery_not_configured") throw error;
+    const deliveryError = new Error("email_delivery_failed");
+    deliveryError.statusCode = 503;
+    throw deliveryError;
+  }
+  return { expiresIn: OTP_TTL_SECONDS, resendAfter: OTP_RESEND_COOLDOWN_SECONDS };
+}
+
+async function consumeEmailOtp({ email, code, purpose }) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || typeof code !== "string" || !/^\d{6}$/.test(code)) {
+    return { ok: false, error: "invalid_or_expired_code" };
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `SELECT id, user_id, email, code_hash, expires_at, attempts, max_attempts
+         FROM kyros_auth_otps
+        WHERE LOWER(email) = $1 AND purpose = $2 AND used_at IS NULL
+        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+      [normalizedEmail, purpose]
+    );
+    if (result.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      client.release();
+      return { ok: false, error: "invalid_or_expired_code" };
+    }
+    const otp = result.rows[0];
+    if (new Date(otp.expires_at).getTime() <= Date.now() || Number(otp.attempts) >= Number(otp.max_attempts)) {
+      await client.query("ROLLBACK");
+      client.release();
+      return { ok: false, error: "invalid_or_expired_code" };
+    }
+    const valid = timingSafeStringEqual(otp.code_hash, otpDigest(normalizedEmail, purpose, code));
+    if (!valid) {
+      await client.query(
+        `UPDATE kyros_auth_otps SET attempts = attempts + 1 WHERE id = $1`,
+        [otp.id]
+      );
+      await client.query("COMMIT");
+      client.release();
+      return { ok: false, error: "invalid_or_expired_code" };
+    }
+    return { ok: true, client, otp };
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    client.release();
+    throw error;
+  }
+}
+
+function releaseConsumedOtp(result) {
+  if (result && result.client) result.client.release();
+}
+
+function userSelectColumns(prefix = "") {
+  const p = prefix ? `${prefix}.` : "";
+  return `${p}id, ${p}name, ${p}email, ${p}phone_number, ${p}sign_in_method, ${p}role,
+          ${p}account_status, ${p}subscription_status, ${p}subscription_start,
+          ${p}subscription_end, ${p}auto_renew, ${p}subscription_data,
+          ${p}email_verified, ${p}phone_verified, ${p}country, ${p}profile_image,
+          ${p}free_trial_used, ${p}created_at, ${p}last_login_at`;
 }
 
 async function registerWithEmail(req, res) {
@@ -5805,55 +6092,45 @@ async function registerWithEmail(req, res) {
   }
   const phoneNumber = typeof body.phoneNumber === "string" ? body.phoneNumber.trim().slice(0, 40) : null;
   const country = typeof body.country === "string" && /^[A-Za-z]{2}$/.test(body.country.trim())
-    ? body.country.trim().toUpperCase()
-    : null;
+    ? body.country.trim().toUpperCase() : null;
   const passwordHash = await hashPassword(password);
   const client = await pool.connect();
+  let userId;
   try {
     await client.query("BEGIN");
     const inserted = await client.query(
       `INSERT INTO users (
-         id, name, email, password_hash, phone_number,
-         sign_in_method, role, account_status, subscription_status,
-         subscription_data, email_verified, country
+         id, name, email, password_hash, phone_number, sign_in_method,
+         role, account_status, subscription_status, subscription_data,
+         email_verified, country, free_trial_used
        ) VALUES ($1, $2, $3, $4, $5, 'password', 'user', 'active', 'free',
-                 '{"plan":"free"}'::jsonb, FALSE, $6)
+                 '{"plan":"free"}'::jsonb, FALSE, $6, NULL)
        RETURNING id`,
       [createPublicId("USR"), name, email, passwordHash, phoneNumber, country]
     );
-    const userId = inserted.rows[0].id;
-    const tokens = await createStoredSession(client, userId);
-    const userResult = await client.query(
-      `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
-        WHERE id = $1
-        RETURNING id, name, email, phone_number, sign_in_method, role,
-                  account_status, subscription_status, subscription_start,
-                  subscription_end, auto_renew, subscription_data,
-                  email_verified, phone_verified, country, profile_image,
-                  created_at, last_login_at`,
-      [userId]
-    );
+    userId = inserted.rows[0].id;
     await client.query("COMMIT");
-    return res.status(201).json({
-      ok: true,
-      message: "Account created successfully.",
-      ...tokens,
-      tokenType: "Bearer",
-      expiresIn: AUTH_ACCESS_TTL_SECONDS,
-      user: publicUser(userResult.rows[0]),
-    });
   } catch (error) {
-    await client.query("ROLLBACK");
-    if (error.code === "23505") {
-      return res.status(409).json({ ok: false, error: "email_already_registered" });
-    }
-    if (error.message === "account_unavailable") {
-      return res.status(403).json({ ok: false, error: "account_unavailable" });
-    }
-    console.error("Registration error:", error.message);
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    if (error.code === "23505") return res.status(409).json({ ok: false, error: "email_already_registered" });
+    console.error("Registration database error:", error.message);
     return res.status(500).json({ ok: false, error: "registration_failed" });
   } finally {
     client.release();
+  }
+  try {
+    const delivery = await issueEmailOtp({ userId, email, name, purpose: "email_verification" });
+    return res.status(201).json({
+      ok: true,
+      verificationRequired: true,
+      email,
+      purpose: "email_verification",
+      expiresIn: delivery.expiresIn,
+      resendAfter: delivery.resendAfter,
+      message: "Your account has been created. Enter the verification code sent to your email.",
+    });
+  } catch (error) {
+    return authErrorResponse(res, error, "email_verification_delivery_failed");
   }
 }
 
@@ -5865,10 +6142,8 @@ async function loginWithEmail(req, res) {
   }
   try {
     const result = await pool.query(
-      `SELECT id, password_hash, account_status
-         FROM users
-        WHERE LOWER(email) = $1 AND deleted_at IS NULL
-        LIMIT 1`,
+      `SELECT id, password_hash, account_status, email_verified
+         FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1`,
       [email]
     );
     if (result.rowCount !== 1 || !result.rows[0].password_hash) {
@@ -5878,6 +6153,14 @@ async function loginWithEmail(req, res) {
     const passwordValid = await verifyPassword(password, user.password_hash);
     if (!passwordValid || user.account_status !== "active") {
       return res.status(401).json({ ok: false, error: "invalid_credentials" });
+    }
+    if (!user.email_verified) {
+      return res.status(403).json({
+        ok: false,
+        error: "email_verification_required",
+        email,
+        message: "Verify your email address before signing in. You can request a new code.",
+      });
     }
     if (user.password_hash.startsWith("scrypt$")) {
       const upgradedHash = await hashPassword(password);
@@ -5894,27 +6177,18 @@ async function loginWithEmail(req, res) {
       const updated = await client.query(
         `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
           WHERE id = $1 AND account_status = 'active' AND deleted_at IS NULL
-          RETURNING id, name, email, phone_number, sign_in_method, role,
-                    account_status, subscription_status, subscription_start,
-                    subscription_end, auto_renew, subscription_data,
-                    email_verified, phone_verified, country, profile_image,
-                    created_at, last_login_at`,
+          RETURNING ${userSelectColumns()}`,
         [user.id]
       );
       if (updated.rowCount !== 1) throw new Error("account_unavailable");
       await client.query("COMMIT");
       return res.json({
-        ok: true,
-        ...tokens,
-        tokenType: "Bearer",
-        expiresIn: AUTH_ACCESS_TTL_SECONDS,
+        ok: true, ...tokens, tokenType: "Bearer", expiresIn: AUTH_ACCESS_TTL_SECONDS,
         user: publicUser(updated.rows[0]),
       });
     } catch (error) {
-      await client.query("ROLLBACK");
-      if (error.message === "account_unavailable") {
-        return res.status(403).json({ ok: false, error: "account_unavailable" });
-      }
+      try { await client.query("ROLLBACK"); } catch (_) {}
+      if (error.message === "account_unavailable") return res.status(403).json({ ok: false, error: "account_unavailable" });
       throw error;
     } finally {
       client.release();
@@ -5922,6 +6196,79 @@ async function loginWithEmail(req, res) {
   } catch (error) {
     console.error("Login error:", error.message);
     return res.status(500).json({ ok: false, error: "login_failed" });
+  }
+}
+
+async function verifyEmailAddress(req, res) {
+  const email = normalizeEmail(req.body && req.body.email);
+  const code = String((req.body && (req.body.code || req.body.otp)) || "");
+  if (!email || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ ok: false, error: "invalid_or_expired_code" });
+  }
+  let consumed;
+  try {
+    consumed = await consumeEmailOtp({ email, code, purpose: "email_verification" });
+    if (!consumed.ok) return res.status(400).json({ ok: false, error: consumed.error });
+    const client = consumed.client;
+    const otp = consumed.otp;
+    try {
+      await client.query(`UPDATE kyros_auth_otps SET used_at = NOW() WHERE id = $1`, [otp.id]);
+      const updated = await client.query(
+        `UPDATE users SET email_verified = TRUE, updated_at = NOW()
+          WHERE id = $1 AND LOWER(email) = $2 AND deleted_at IS NULL
+          RETURNING id`,
+        [otp.user_id, email]
+      );
+      if (updated.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ ok: false, error: "account_not_found" });
+      }
+      const tokens = await createStoredSession(client, otp.user_id);
+      const userResult = await client.query(
+        `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
+          WHERE id = $1 RETURNING ${userSelectColumns()}`,
+        [otp.user_id]
+      );
+      await client.query("COMMIT");
+      return res.json({
+        ok: true, verified: true, ...tokens, tokenType: "Bearer", expiresIn: AUTH_ACCESS_TTL_SECONDS,
+        user: publicUser(userResult.rows[0]),
+        message: "Email verified. You are now signed in.",
+      });
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+      throw error;
+    } finally {
+      releaseConsumedOtp(consumed);
+    }
+  } catch (error) {
+    console.error("Email verification error:", error.message);
+    return res.status(500).json({ ok: false, error: "email_verification_failed" });
+  }
+}
+
+async function resendEmailVerification(req, res) {
+  const email = normalizeEmail(req.body && req.body.email);
+  if (!email) return res.status(400).json({ ok: false, error: "invalid_email" });
+  try {
+    const found = await pool.query(
+      `SELECT id, name, email_verified FROM users
+        WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1`,
+      [email]
+    );
+    if (found.rowCount === 1 && !found.rows[0].email_verified) {
+      const delivery = await issueEmailOtp({
+        userId: found.rows[0].id, email, name: found.rows[0].name, purpose: "email_verification",
+      });
+      return res.json({
+        ok: true, verificationRequired: true, email,
+        expiresIn: delivery.expiresIn, resendAfter: delivery.resendAfter,
+        message: "If this account needs verification, a new code has been sent.",
+      });
+    }
+    return res.json({ ok: true, message: "If this account needs verification, a new code has been sent." });
+  } catch (error) {
+    return authErrorResponse(res, error, "email_verification_delivery_failed");
   }
 }
 
@@ -5935,10 +6282,8 @@ async function loginWithGoogle(req, res) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    let found = await client.query(
-      `SELECT id FROM users
-        WHERE sign_in_id = $1 AND deleted_at IS NULL
-        LIMIT 1`,
+    const found = await client.query(
+      `SELECT id FROM users WHERE sign_in_id = $1 AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
       [googleIdentity.sub]
     );
     let userId;
@@ -5946,11 +6291,7 @@ async function loginWithGoogle(req, res) {
       userId = found.rows[0].id;
     } else {
       const byEmail = await client.query(
-        `SELECT id, sign_in_id, password_hash
-           FROM users
-          WHERE LOWER(email) = $1 AND deleted_at IS NULL
-          LIMIT 1
-          FOR UPDATE`,
+        `SELECT id FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1 FOR UPDATE`,
         [googleIdentity.email]
       );
       if (byEmail.rowCount === 1) {
@@ -5958,16 +6299,16 @@ async function loginWithGoogle(req, res) {
         return res.status(409).json({
           ok: false,
           error: "account_link_required",
-          message: "An account already exists for this email. Sign in with that account, then link Google from account settings.",
+          message: "An account already exists for this email. Sign in to that account first, then link Google from account settings.",
         });
       }
       const inserted = await client.query(
         `INSERT INTO users (
-           id, name, email, sign_in_method, sign_in_id,
-           role, account_status, subscription_status,
-           subscription_data, email_verified, profile_image
+           id, name, email, sign_in_method, sign_in_id, role, account_status,
+           subscription_status, subscription_data, email_verified, profile_image,
+           free_trial_used
          ) VALUES ($1, $2, $3, 'google', $4, 'user', 'active', 'free',
-                   '{"plan":"free"}'::jsonb, TRUE, $5)
+                   '{"plan":"free"}'::jsonb, TRUE, $5, NULL)
          RETURNING id`,
         [createPublicId("USR"), googleIdentity.name, googleIdentity.email, googleIdentity.sub, googleIdentity.picture]
       );
@@ -5977,31 +6318,19 @@ async function loginWithGoogle(req, res) {
     const updated = await client.query(
       `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
         WHERE id = $1 AND account_status = 'active' AND deleted_at IS NULL
-        RETURNING id, name, email, phone_number, sign_in_method, role,
-                  account_status, subscription_status, subscription_start,
-                  subscription_end, auto_renew, subscription_data,
-                  email_verified, phone_verified, country, profile_image,
-                  created_at, last_login_at`,
+        RETURNING ${userSelectColumns()}`,
       [userId]
     );
     if (updated.rowCount !== 1) throw new Error("account_unavailable");
     await client.query("COMMIT");
     return res.json({
-      ok: true,
-      ...tokens,
-      tokenType: "Bearer",
-      expiresIn: AUTH_ACCESS_TTL_SECONDS,
-      user: publicUser(updated.rows[0]),
-      isNewUser: found.rowCount === 0,
+      ok: true, ...tokens, tokenType: "Bearer", expiresIn: AUTH_ACCESS_TTL_SECONDS,
+      user: publicUser(updated.rows[0]), isNewUser: found.rowCount === 0,
     });
   } catch (error) {
-    await client.query("ROLLBACK");
-    if (error.code === "23505") {
-      return res.status(409).json({ ok: false, error: "account_conflict" });
-    }
-    if (error.message === "account_unavailable") {
-      return res.status(403).json({ ok: false, error: "account_unavailable" });
-    }
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    if (error.code === "23505") return res.status(409).json({ ok: false, error: "account_conflict" });
+    if (error.message === "account_unavailable") return res.status(403).json({ ok: false, error: "account_unavailable" });
     console.error("Google sign-in error:", error.message);
     return res.status(500).json({ ok: false, error: "google_sign_in_failed" });
   } finally {
@@ -6028,10 +6357,7 @@ app.post("/api/auth/google/link", requireAuth, googleRateLimit, async (req, res)
     const result = await pool.query(
       `UPDATE users
           SET sign_in_id = $2,
-              sign_in_method = CASE
-                WHEN password_hash IS NULL THEN 'google'
-                ELSE 'password+google'
-              END,
+              sign_in_method = CASE WHEN password_hash IS NULL THEN 'google' ELSE 'password+google' END,
               email_verified = TRUE,
               profile_image = COALESCE(profile_image, $3),
               updated_at = NOW()
@@ -6040,16 +6366,218 @@ app.post("/api/auth/google/link", requireAuth, googleRateLimit, async (req, res)
         RETURNING id, sign_in_method`,
       [req.auth.user.id, identity.sub, identity.picture]
     );
-    if (result.rowCount !== 1) {
-      return res.status(409).json({ ok: false, error: "google_account_already_linked" });
-    }
+    if (result.rowCount !== 1) return res.status(409).json({ ok: false, error: "google_account_already_linked" });
     return res.json({ ok: true, message: "Google account linked successfully." });
   } catch (error) {
-    if (error.code === "23505") {
-      return res.status(409).json({ ok: false, error: "google_account_already_linked" });
-    }
+    if (error.code === "23505") return res.status(409).json({ ok: false, error: "google_account_already_linked" });
     console.error("Google account linking error:", error.message);
     return res.status(500).json({ ok: false, error: "google_link_failed" });
+  }
+});
+
+app.post("/api/auth/email/verification/request", authConfigured, otpRateLimit, resendEmailVerification);
+app.post("/api/auth/resend-verification", authConfigured, otpRateLimit, resendEmailVerification);
+app.post("/api/auth/email/verification/verify", authConfigured, otpRateLimit, verifyEmailAddress);
+app.post("/api/auth/verify-email", authConfigured, otpRateLimit, verifyEmailAddress);
+
+app.post("/api/auth/forgot-password", authConfigured, passwordResetRateLimit, async (req, res) => {
+  const email = normalizeEmail(req.body && req.body.email);
+  if (!email) return res.status(400).json({ ok: false, error: "invalid_email" });
+  try {
+    const found = await pool.query(
+      `SELECT id, name FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1`,
+      [email]
+    );
+    if (found.rowCount === 1) {
+      await issueEmailOtp({ userId: found.rows[0].id, email, name: found.rows[0].name, purpose: "password_reset" });
+    } else {
+      // Check mail configuration even for unknown accounts to avoid account enumeration.
+      getMailTransporter();
+    }
+    return res.json({
+      ok: true,
+      verificationRequired: true,
+      email,
+      expiresIn: OTP_TTL_SECONDS,
+      message: "If an account exists for this email, a password reset code has been sent.",
+    });
+  } catch (error) {
+    return authErrorResponse(res, error, "password_reset_delivery_failed");
+  }
+});
+async function requestPasswordReset(req, res) {
+  const email = normalizeEmail(req.body && req.body.email);
+  if (!email) return res.status(400).json({ ok: false, error: "invalid_email" });
+  try {
+    const found = await pool.query(
+      `SELECT id, name FROM users WHERE LOWER(email) = $1 AND deleted_at IS NULL LIMIT 1`,
+      [email]
+    );
+    if (found.rowCount === 1) {
+      await issueEmailOtp({ userId: found.rows[0].id, email, name: found.rows[0].name, purpose: "password_reset" });
+    } else {
+      getMailTransporter();
+    }
+    return res.json({ ok: true, verificationRequired: true, email, expiresIn: OTP_TTL_SECONDS,
+      message: "If an account exists for this email, a password reset code has been sent." });
+  } catch (error) {
+    return authErrorResponse(res, error, "password_reset_delivery_failed");
+  }
+}
+app.post("/api/auth/password-reset/request", authConfigured, passwordResetRateLimit, requestPasswordReset);
+
+app.post("/api/auth/password-reset/verify", authConfigured, otpRateLimit, async (req, res) => {
+  const email = normalizeEmail(req.body && req.body.email);
+  const code = String((req.body && (req.body.code || req.body.otp)) || "");
+  if (!email || !/^\d{6}$/.test(code)) return res.status(400).json({ ok: false, error: "invalid_or_expired_code" });
+  let consumed;
+  try {
+    consumed = await consumeEmailOtp({ email, code, purpose: "password_reset" });
+    if (!consumed.ok) return res.status(400).json({ ok: false, error: consumed.error });
+    const { client, otp } = consumed;
+    try {
+      const resetToken = crypto.randomBytes(32).toString("base64url");
+      await client.query(
+        `UPDATE kyros_auth_otps
+            SET used_at = NOW(), reset_token_hash = $2,
+                reset_token_expires_at = NOW() + ($3::text || ' seconds')::interval,
+                reset_token_used_at = NULL
+          WHERE id = $1`,
+        [otp.id, sha256Hex(resetToken), PASSWORD_RESET_TOKEN_TTL_SECONDS]
+      );
+      await client.query("COMMIT");
+      return res.json({
+        ok: true,
+        verified: true,
+        resetToken,
+        expiresIn: PASSWORD_RESET_TOKEN_TTL_SECONDS,
+        message: "Code verified. You can now choose a new password.",
+      });
+    } catch (error) {
+      try { await client.query("ROLLBACK"); } catch (_) {}
+      throw error;
+    } finally {
+      releaseConsumedOtp(consumed);
+    }
+  } catch (error) {
+    console.error("Password reset code verification error:", error.message);
+    return res.status(500).json({ ok: false, error: "password_reset_verification_failed" });
+  }
+});
+
+async function completePasswordReset(req, res) {
+  const email = normalizeEmail(req.body && req.body.email);
+  const resetToken = req.body && req.body.resetToken;
+  const newPassword = req.body && (req.body.newPassword || req.body.password);
+  const confirmPassword = req.body && (req.body.confirmPassword || req.body.passwordConfirmation);
+  if (!email || typeof resetToken !== "string" || resetToken.length < 32 || resetToken.length > 256) {
+    return res.status(400).json({ ok: false, error: "invalid_password_reset_request" });
+  }
+  if (!validatePassword(newPassword) || newPassword !== confirmPassword) {
+    return res.status(400).json({
+      ok: false,
+      error: "invalid_new_password",
+      message: "Passwords must match, contain at least 10 characters, and use no more than 72 UTF-8 bytes.",
+    });
+  }
+  const newHash = await hashPassword(newPassword);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const otpResult = await client.query(
+      `SELECT id, user_id FROM kyros_auth_otps
+        WHERE LOWER(email) = $1 AND purpose = 'password_reset'
+          AND reset_token_hash = $2 AND reset_token_used_at IS NULL
+          AND reset_token_expires_at > NOW()
+        ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
+      [email, sha256Hex(resetToken)]
+    );
+    if (otpResult.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ ok: false, error: "invalid_or_expired_reset_token" });
+    }
+    const otp = otpResult.rows[0];
+    const updated = await client.query(
+      `UPDATE users
+          SET password_hash = $2, token_version = token_version + 1,
+              refresh_sessions = '[]'::jsonb, updated_at = NOW()
+        WHERE id = $1 AND deleted_at IS NULL AND account_status = 'active'
+        RETURNING ${userSelectColumns()}`,
+      [otp.user_id, newHash]
+    );
+    if (updated.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ ok: false, error: "account_unavailable" });
+    }
+    await client.query(
+      `UPDATE kyros_auth_otps SET reset_token_used_at = NOW() WHERE id = $1`,
+      [otp.id]
+    );
+    const tokens = await createStoredSession(client, otp.user_id);
+    const userResult = await client.query(
+      `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
+        WHERE id = $1 RETURNING ${userSelectColumns()}`,
+      [otp.user_id]
+    );
+    await client.query("COMMIT");
+    return res.json({
+      ok: true,
+      ...tokens,
+      tokenType: "Bearer",
+      expiresIn: AUTH_ACCESS_TTL_SECONDS,
+      user: publicUser(userResult.rows[0]),
+      message: "Your password has been updated. You are now signed in.",
+    });
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    console.error("Password reset completion error:", error.message);
+    return res.status(500).json({ ok: false, error: "password_reset_failed" });
+  } finally {
+    client.release();
+  }
+}
+app.post("/api/auth/password-reset/complete", authConfigured, passwordResetRateLimit, completePasswordReset);
+app.post("/api/auth/password-reset/confirm", authConfigured, passwordResetRateLimit, completePasswordReset);
+app.post("/api/auth/reset-password", authConfigured, passwordResetRateLimit, completePasswordReset);
+
+app.post("/api/auth/change-password", requireAuth, loginRateLimit, async (req, res) => {
+  const currentPassword = req.body && req.body.currentPassword;
+  const newPassword = req.body && req.body.newPassword;
+  const confirmPassword = req.body && req.body.confirmPassword;
+  if (typeof currentPassword !== "string" || !validatePassword(newPassword) || newPassword !== confirmPassword) {
+    return res.status(400).json({ ok: false, error: "invalid_new_password" });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const found = await client.query(
+      `SELECT id, password_hash FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.auth.user.id]
+    );
+    if (found.rowCount !== 1 || !found.rows[0].password_hash ||
+        !(await verifyPassword(currentPassword, found.rows[0].password_hash))) {
+      await client.query("ROLLBACK");
+      return res.status(401).json({ ok: false, error: "current_password_incorrect" });
+    }
+    const newHash = await hashPassword(newPassword);
+    await client.query(
+      `UPDATE users SET password_hash = $2, token_version = token_version + 1,
+              refresh_sessions = '[]'::jsonb, updated_at = NOW() WHERE id = $1`,
+      [req.auth.user.id, newHash]
+    );
+    const tokens = await createStoredSession(client, req.auth.user.id);
+    const userResult = await client.query(
+      `UPDATE users SET last_login_at = NOW() WHERE id = $1 RETURNING ${userSelectColumns()}`,
+      [req.auth.user.id]
+    );
+    await client.query("COMMIT");
+    return res.json({ ok: true, ...tokens, tokenType: "Bearer", expiresIn: AUTH_ACCESS_TTL_SECONDS, user: publicUser(userResult.rows[0]) });
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    console.error("Password change error:", error.message);
+    return res.status(500).json({ ok: false, error: "password_change_failed" });
+  } finally {
+    client.release();
   }
 });
 
@@ -6066,9 +6594,7 @@ app.post("/api/auth/refresh", authConfigured, loginRateLimit, async (req, res) =
     await client.query("BEGIN");
     const result = await client.query(
       `SELECT id, token_version, account_status, refresh_sessions
-         FROM users
-        WHERE id = $1 AND deleted_at IS NULL
-        FOR UPDATE`,
+         FROM users WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [claims.sub]
     );
     if (result.rowCount !== 1 || result.rows[0].account_status !== "active" ||
@@ -6093,15 +6619,16 @@ app.post("/api/auth/refresh", authConfigured, loginRateLimit, async (req, res) =
       `UPDATE users SET refresh_sessions = $2::jsonb, updated_at = NOW() WHERE id = $1`,
       [user.id, JSON.stringify(nextSessions)]
     );
+    const profile = await client.query(
+      `SELECT ${userSelectColumns()} FROM users WHERE id = $1`, [user.id]
+    );
     await client.query("COMMIT");
     return res.json({
-      ok: true,
-      ...tokens,
-      tokenType: "Bearer",
-      expiresIn: AUTH_ACCESS_TTL_SECONDS,
+      ok: true, ...tokens, tokenType: "Bearer", expiresIn: AUTH_ACCESS_TTL_SECONDS,
+      user: publicUser(profile.rows[0]),
     });
   } catch (error) {
-    await client.query("ROLLBACK");
+    try { await client.query("ROLLBACK"); } catch (_) {}
     console.error("Token refresh error:", error.message);
     return res.status(500).json({ ok: false, error: "token_refresh_failed" });
   } finally {
@@ -6113,28 +6640,22 @@ app.post("/api/auth/logout", requireAuth, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const result = await client.query(
-      `SELECT refresh_sessions FROM users WHERE id = $1 FOR UPDATE`,
-      [req.auth.user.id]
-    );
+    const result = await client.query(`SELECT refresh_sessions FROM users WHERE id = $1 FOR UPDATE`, [req.auth.user.id]);
     if (result.rowCount === 1) {
       const sessions = safeJsonArray(result.rows[0].refresh_sessions);
-      const remaining = req.body && req.body.allDevices === true
-        ? []
-        : sessions.filter(session => session.sid !== req.auth.claims.sid);
+      const allDevices = req.body && req.body.allDevices === true;
+      const remaining = allDevices ? [] : sessions.filter(session => session.sid !== req.auth.claims.sid);
       await client.query(
-        `UPDATE users
-            SET refresh_sessions = $2::jsonb,
-                token_version = CASE WHEN $3 THEN token_version + 1 ELSE token_version END,
-                updated_at = NOW()
-          WHERE id = $1`,
-        [req.auth.user.id, JSON.stringify(remaining), req.body && req.body.allDevices === true]
+        `UPDATE users SET refresh_sessions = $2::jsonb,
+             token_version = CASE WHEN $3 THEN token_version + 1 ELSE token_version END,
+             updated_at = NOW() WHERE id = $1`,
+        [req.auth.user.id, JSON.stringify(remaining), allDevices]
       );
     }
     await client.query("COMMIT");
     return res.json({ ok: true, message: "Signed out successfully." });
   } catch (error) {
-    await client.query("ROLLBACK");
+    try { await client.query("ROLLBACK"); } catch (_) {}
     console.error("Logout error:", error.message);
     return res.status(500).json({ ok: false, error: "logout_failed" });
   } finally {
@@ -6147,26 +6668,92 @@ app.get("/api/auth/me", requireAuth, (req, res) => {
 });
 
 app.get("/api/subscription", requireAuth, (req, res) => {
-  return res.json({ ok: true, subscription: publicSubscription(req.auth.user) });
-});
-
-// These operations deliberately do not claim success until an email delivery
-// provider and verification/reset token delivery flow are configured.
-app.post("/api/auth/forgot-password", authConfigured, loginRateLimit, (req, res) => {
-  return res.status(503).json({
-    ok: false,
-    error: "password_reset_delivery_not_configured",
-    message: "Password reset is unavailable until a verified email delivery provider is configured.",
-  });
-});
-app.post("/api/auth/password-reset/request", authConfigured, loginRateLimit, (req, res) => {
-  return res.status(503).json({
-    ok: false,
-    error: "password_reset_delivery_not_configured",
-    message: "Password reset is unavailable until a verified email delivery provider is configured.",
+  const trial = publicFreeTrial(req.auth.user);
+  return res.json({
+    ok: true,
+    subscription: publicSubscription(req.auth.user),
+    freeTrial: trial,
+    freeTrialUsed: Boolean(storedFreeTrial(req.auth.user)),
+    canStartFreeTrial: !storedFreeTrial(req.auth.user),
   });
 });
 
+async function startFreeTrial(req, res) {
+  const timezoneRaw = req.body && req.body.timezone;
+  let timezone = "UTC";
+  if (typeof timezoneRaw === "string" && timezoneRaw.length <= 80) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: timezoneRaw });
+      timezone = timezoneRaw;
+    } catch (_) {}
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const found = await client.query(
+      `SELECT ${userSelectColumns()} FROM users
+        WHERE id = $1 AND deleted_at IS NULL AND account_status = 'active'
+        FOR UPDATE`,
+      [req.auth.user.id]
+    );
+    if (found.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ ok: false, error: "account_unavailable" });
+    }
+    if (storedFreeTrial(found.rows[0])) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "free_trial_already_used",
+        freeTrialUsed: true,
+        freeTrial: publicFreeTrial(found.rows[0]),
+        message: "The 7-day free trial has already been used on this account.",
+      });
+    }
+    const updated = await client.query(
+      `UPDATE users
+          SET free_trial_used = jsonb_build_object(
+                'trialId', $2::text,
+                'plan', 'pro',
+                'status', 'active',
+                'durationDays', $3::integer,
+                'startedAt', NOW(),
+                'endsAt', NOW() + ($3::text || ' days')::interval,
+                'activatedAt', NOW(),
+                'activatedBy', 'account_owner',
+                'activationSource', 'kyros_app',
+                'timezone', $4::text,
+                'policyVersion', 1
+              ),
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING ${userSelectColumns()}`,
+      [req.auth.user.id, crypto.randomUUID(), FREE_TRIAL_DURATION_DAYS, timezone]
+    );
+    await client.query("COMMIT");
+    const user = updated.rows[0];
+    return res.json({
+      ok: true,
+      message: "Your 7-day KyroS Pro trial is now active.",
+      freeTrialUsed: true,
+      freeTrial: publicFreeTrial(user),
+      subscription: publicSubscription(user),
+      user: publicUser(user),
+    });
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    console.error("Free trial activation error:", error.message);
+    return res.status(500).json({ ok: false, error: "free_trial_activation_failed" });
+  } finally {
+    client.release();
+  }
+}
+app.post("/api/subscription/trial/start", requireAuth, startFreeTrial);
+app.post("/api/auth/free-trial/start", requireAuth, startFreeTrial);
+
+app.get("/api/auth/status", requireAuth, (req, res) => {
+  return res.json({ ok: true, authenticated: true, user: publicUser(req.auth.user) });
+});
 
 /* ============================================================
    404
