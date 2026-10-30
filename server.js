@@ -12,23 +12,13 @@ const { OAuth2Client } = require("google-auth-library");
 const app = express();
 app.set("trust proxy", true);
 app.disable("x-powered-by");
-app.use(express.json({ limit: "128kb", strict: true }));
-app.use((req, res, next) => {
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Cache-Control", "no-store");
-  next();
-});
+app.use(express.json({ limit: "128kb" }));
 
 const PORT = process.env.PORT || 3000;
 
 /* ============================================================
    DATABASE
    ============================================================ */
-
-// Production deployments should provide DATABASE_URL or PG* variables through
-// the hosting provider's environment settings. No dotenv file is loaded.
 
 const pool = new Pool({
   host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
@@ -42,10 +32,6 @@ const pool = new Pool({
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
-});
-
-pool.on("error", error => {
-  console.error("Unexpected PostgreSQL pool error:", error.message);
 });
 
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -533,109 +519,6 @@ async function initializeDatabase() {
       )
     `);
 
-    // User accounts and payment history. These are deliberately the only two
-    // new application tables; refresh sessions are stored as revocable JSONB
-    // records on the user row to avoid introducing a third table.
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        "index" BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        id VARCHAR(40) NOT NULL UNIQUE,
-        name VARCHAR(160) NOT NULL,
-        email VARCHAR(320) NOT NULL,
-        password_hash TEXT,
-        phone_number VARCHAR(40),
-        sign_in_method VARCHAR(30) NOT NULL DEFAULT 'password'
-          CHECK (sign_in_method IN ('password', 'google', 'password+google')),
-        sign_in_id VARCHAR(255),
-        role VARCHAR(30) NOT NULL DEFAULT 'user',
-        account_status VARCHAR(20) NOT NULL DEFAULT 'active'
-          CHECK (account_status IN ('active', 'suspended', 'disabled')),
-        subscription_status VARCHAR(20) NOT NULL DEFAULT 'free'
-          CHECK (subscription_status IN ('free', 'active', 'expired', 'cancelled')),
-        subscription_start TIMESTAMPTZ,
-        subscription_end TIMESTAMPTZ,
-        auto_renew BOOLEAN NOT NULL DEFAULT FALSE,
-        subscription_data JSONB NOT NULL DEFAULT '{"plan":"free"}'::jsonb,
-        email_verified BOOLEAN NOT NULL DEFAULT FALSE,
-        phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
-        country VARCHAR(2),
-        profile_image TEXT,
-        refresh_sessions JSONB NOT NULL DEFAULT '[]'::jsonb
-          CHECK (jsonb_typeof(refresh_sessions) = 'array'),
-        token_version INTEGER NOT NULL DEFAULT 1,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        last_login_at TIMESTAMPTZ,
-        deleted_at TIMESTAMPTZ,
-        CONSTRAINT users_public_id_format CHECK (id ~ '^[A-Za-z0-9]{12,40}$'),
-        CONSTRAINT users_subscription_dates CHECK (
-          subscription_end IS NULL OR subscription_start IS NULL
-          OR subscription_end >= subscription_start
-        )
-      )
-    `);
-
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower
-      ON users (LOWER(email))
-    `);
-
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sign_in_id
-      ON users (sign_in_id)
-      WHERE sign_in_id IS NOT NULL
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_users_account_status
-      ON users (account_status, created_at DESC)
-    `);
-
-    await client.query(`
-      CREATE TABLE IF NOT EXISTS payments (
-        "index" BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        id VARCHAR(40) NOT NULL UNIQUE,
-        user_id VARCHAR(40) NOT NULL
-          REFERENCES users(id) ON DELETE RESTRICT,
-        user_name VARCHAR(160) NOT NULL,
-        user_email VARCHAR(320) NOT NULL,
-        amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
-        currency VARCHAR(3) NOT NULL DEFAULT 'KES'
-          CHECK (currency ~ '^[A-Z]{3}$'),
-        payment_method VARCHAR(40) NOT NULL,
-        transaction_reference VARCHAR(200),
-        payment_status VARCHAR(20) NOT NULL DEFAULT 'pending'
-          CHECK (payment_status IN ('pending', 'successful', 'failed', 'refunded')),
-        payment_purpose VARCHAR(120) NOT NULL,
-        subscription_start TIMESTAMPTZ,
-        subscription_end TIMESTAMPTZ,
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        paid_at TIMESTAMPTZ,
-        CONSTRAINT payments_public_id_format CHECK (id ~ '^[A-Za-z0-9]{12,40}$'),
-        CONSTRAINT payments_subscription_dates CHECK (
-          subscription_end IS NULL OR subscription_start IS NULL
-          OR subscription_end >= subscription_start
-        )
-      )
-    `);
-
-    await client.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_transaction_reference
-      ON payments (transaction_reference)
-      WHERE transaction_reference IS NOT NULL
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_payments_user_created
-      ON payments (user_id, created_at DESC)
-    `);
-
-    await client.query(`
-      CREATE INDEX IF NOT EXISTS idx_payments_status_created
-      ON payments (payment_status, created_at DESC)
-    `);
-
     await client.query(`
       CREATE TABLE IF NOT EXISTS kyros_remote_camera_events (
         event_id BIGSERIAL PRIMARY KEY,
@@ -756,6 +639,107 @@ async function initializeDatabase() {
         remote_camera_id,
         created_at DESC
       )
+    `);
+
+    // Authentication accounts and payment records. Existing KyroS tables remain unchanged.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        "index" BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        id VARCHAR(40) NOT NULL UNIQUE,
+        name VARCHAR(160) NOT NULL,
+        email VARCHAR(320) NOT NULL,
+        password_hash TEXT,
+        phone_number VARCHAR(40),
+        sign_in_method VARCHAR(30) NOT NULL DEFAULT 'password'
+          CHECK (sign_in_method IN ('password', 'google', 'password+google')),
+        sign_in_id VARCHAR(255),
+        role VARCHAR(30) NOT NULL DEFAULT 'user',
+        account_status VARCHAR(20) NOT NULL DEFAULT 'active'
+          CHECK (account_status IN ('active', 'suspended', 'disabled')),
+        subscription_status VARCHAR(20) NOT NULL DEFAULT 'free'
+          CHECK (subscription_status IN ('free', 'active', 'expired', 'cancelled')),
+        subscription_start TIMESTAMPTZ,
+        subscription_end TIMESTAMPTZ,
+        auto_renew BOOLEAN NOT NULL DEFAULT FALSE,
+        subscription_data JSONB NOT NULL DEFAULT '{"plan":"free"}'::jsonb,
+        email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        phone_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        country VARCHAR(2),
+        profile_image TEXT,
+        refresh_sessions JSONB NOT NULL DEFAULT '[]'::jsonb
+          CHECK (jsonb_typeof(refresh_sessions) = 'array'),
+        token_version INTEGER NOT NULL DEFAULT 1,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_login_at TIMESTAMPTZ,
+        deleted_at TIMESTAMPTZ,
+        CONSTRAINT users_public_id_format CHECK (id ~ '^[A-Za-z0-9]{12,40}$'),
+        CONSTRAINT users_subscription_dates CHECK (
+          subscription_end IS NULL OR subscription_start IS NULL
+          OR subscription_end >= subscription_start
+        )
+      )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower
+      ON users (LOWER(email))
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sign_in_id
+      ON users (sign_in_id)
+      WHERE sign_in_id IS NOT NULL
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_users_account_status
+      ON users (account_status, created_at DESC)
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        "index" BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        id VARCHAR(40) NOT NULL UNIQUE,
+        user_id VARCHAR(40) NOT NULL
+          REFERENCES users(id) ON DELETE RESTRICT,
+        user_name VARCHAR(160) NOT NULL,
+        user_email VARCHAR(320) NOT NULL,
+        amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
+        currency VARCHAR(3) NOT NULL DEFAULT 'KES'
+          CHECK (currency ~ '^[A-Z]{3}$'),
+        payment_method VARCHAR(40) NOT NULL,
+        transaction_reference VARCHAR(200),
+        payment_status VARCHAR(20) NOT NULL DEFAULT 'pending'
+          CHECK (payment_status IN ('pending', 'successful', 'failed', 'refunded')),
+        payment_purpose VARCHAR(120) NOT NULL,
+        subscription_start TIMESTAMPTZ,
+        subscription_end TIMESTAMPTZ,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        paid_at TIMESTAMPTZ,
+        CONSTRAINT payments_public_id_format CHECK (id ~ '^[A-Za-z0-9]{12,40}$'),
+        CONSTRAINT payments_subscription_dates CHECK (
+          subscription_end IS NULL OR subscription_start IS NULL
+          OR subscription_end >= subscription_start
+        )
+      )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_transaction_reference
+      ON payments (transaction_reference)
+      WHERE transaction_reference IS NOT NULL
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_payments_user_created
+      ON payments (user_id, created_at DESC)
+    `);
+
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_payments_status_created
+      ON payments (payment_status, created_at DESC)
     `);
 
     await client.query("COMMIT");
@@ -1293,808 +1277,6 @@ function buildIceServers(remoteCameraId) {
 
   return servers;
 }
-
-/* ============================================================
-   AUTHENTICATION + USER ACCOUNTS
-   ============================================================ */
-
-const AUTH_ISSUER = "https://api.kyros.app";
-const AUTH_AUDIENCE = "kyros-api";
-const AUTH_ACCESS_TTL_SECONDS = 15 * 60;
-const AUTH_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
-const AUTH_MAX_SESSIONS_PER_USER = 10;
-const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
-const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
-  ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
-  : null;
-const AUTH_REFRESH_SECRET = AUTH_JWT_SECRET
-  ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-refresh-v1").digest()
-  : null;
-const GOOGLE_CLIENT_IDS = new Set(
-  String(process.env.GOOGLE_CLIENT_IDS || "")
-    .split(",")
-    .map(value => value.trim())
-    .filter(Boolean)
-);
-
-function validateAuthConfiguration() {
-  if (Buffer.byteLength(AUTH_JWT_SECRET, "utf8") < 64) {
-    throw new Error(
-      "AUTH_JWT_SECRET must be set to a cryptographically random secret of at least 64 characters."
-    );
-  }
-}
-
-function createPublicId(prefix) {
-  return `${prefix}${crypto.randomBytes(16).toString("hex")}`;
-}
-
-function normalizeEmail(value) {
-  if (typeof value !== "string") return null;
-  const email = value.trim().toLowerCase();
-  if (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return null;
-  }
-  return email;
-}
-
-const BCRYPT_ROUNDS = 12;
-
-function validatePassword(value) {
-  return typeof value === "string" &&
-    value.length >= 10 &&
-    Buffer.byteLength(value, "utf8") <= 72 &&
-    !/[\u0000-\u001f\u007f]/.test(value);
-}
-
-async function hashPassword(password) {
-  return bcrypt.hash(password, BCRYPT_ROUNDS);
-}
-
-// Compatibility for accounts created by the previous pre-release backend.
-// New accounts always use bcrypt; a successful legacy login is upgraded.
-const scryptAsync = (password, salt, keyLength, options) =>
-  new Promise((resolve, reject) => {
-    crypto.scrypt(password, salt, keyLength, options, (error, derivedKey) => {
-      if (error) reject(error);
-      else resolve(derivedKey);
-    });
-  });
-
-async function verifyLegacyScryptPassword(password, encoded) {
-  const parts = encoded.split("$");
-  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
-  const cost = Number(parts[1]);
-  const blockSize = Number(parts[2]);
-  const parallelization = Number(parts[3]);
-  if (
-    !Number.isInteger(cost) || cost < 16384 || cost > 131072 ||
-    !Number.isInteger(blockSize) || blockSize < 1 || blockSize > 16 ||
-    !Number.isInteger(parallelization) || parallelization < 1 || parallelization > 4
-  ) return false;
-  let salt;
-  let expected;
-  try {
-    salt = Buffer.from(parts[4], "base64url");
-    expected = Buffer.from(parts[5], "base64url");
-  } catch (_) {
-    return false;
-  }
-  if (salt.length < 16 || expected.length !== 64) return false;
-  const actual = await scryptAsync(password, salt, expected.length, {
-    N: cost,
-    r: blockSize,
-    p: parallelization,
-    maxmem: 64 * 1024 * 1024,
-  });
-  return crypto.timingSafeEqual(actual, expected);
-}
-
-async function verifyPassword(password, encoded) {
-  if (typeof encoded !== "string") return false;
-  if (/^\$2[aby]\$/.test(encoded)) {
-    return bcrypt.compare(password, encoded);
-  }
-  if (encoded.startsWith("scrypt$")) {
-    return verifyLegacyScryptPassword(password, encoded);
-  }
-  return false;
-}
-
-function signJwt(payload, secret, ttlSeconds) {
-  return jwt.sign(payload, secret, {
-    algorithm: "HS256",
-    issuer: AUTH_ISSUER,
-    audience: AUTH_AUDIENCE,
-    expiresIn: ttlSeconds,
-  });
-}
-
-function verifyJwt(token, secret, expectedUse) {
-  if (typeof token !== "string" || token.length > 8192) {
-    throw new Error("invalid_token");
-  }
-  try {
-    const claims = jwt.verify(token, secret, {
-      algorithms: ["HS256"],
-      issuer: AUTH_ISSUER,
-      audience: AUTH_AUDIENCE,
-      clockTolerance: 5,
-    });
-    if (
-      !claims || typeof claims !== "object" ||
-      claims.token_use !== expectedUse ||
-      typeof claims.sub !== "string" ||
-      typeof claims.sid !== "string" ||
-      typeof claims.jti !== "string"
-    ) {
-      throw new Error("invalid_token");
-    }
-    return claims;
-  } catch (_) {
-    throw new Error("invalid_token");
-  }
-}
-
-function sha256Hex(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
-function timingSafeStringEqual(left, right) {
-  if (typeof left !== "string" || typeof right !== "string") return false;
-  const a = Buffer.from(left, "utf8");
-  const b = Buffer.from(right, "utf8");
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-function safeJsonArray(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch (_) {
-      return [];
-    }
-  }
-  return [];
-}
-
-function publicSubscription(user) {
-  let data = user.subscription_data || {};
-  if (typeof data === "string") {
-    try { data = JSON.parse(data); } catch (_) { data = {}; }
-  }
-  return {
-    plan: typeof data.plan === "string" ? data.plan : "free",
-    status: user.subscription_status || "free",
-    startDate: user.subscription_start || null,
-    endDate: user.subscription_end || null,
-    autoRenew: Boolean(user.auto_renew),
-  };
-}
-
-function publicUser(user) {
-  return {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    phoneNumber: user.phone_number || null,
-    signInMethod: user.sign_in_method,
-    role: user.role,
-    accountStatus: user.account_status,
-    subscription: publicSubscription(user),
-    emailVerified: Boolean(user.email_verified),
-    phoneVerified: Boolean(user.phone_verified),
-    country: user.country || null,
-    profileImage: user.profile_image || null,
-    createdAt: user.created_at,
-    lastLoginAt: user.last_login_at || null,
-  };
-}
-
-function createTokenPair(user, sessionId) {
-  const common = {
-    sub: user.id,
-    sid: sessionId,
-    ver: Number(user.token_version || 1),
-    jti: crypto.randomUUID(),
-  };
-  const accessToken = signJwt(
-    { ...common, token_use: "access" },
-    AUTH_ACCESS_SECRET,
-    AUTH_ACCESS_TTL_SECONDS
-  );
-  const refreshToken = signJwt(
-    { ...common, token_use: "refresh" },
-    AUTH_REFRESH_SECRET,
-    AUTH_REFRESH_TTL_SECONDS
-  );
-  return { accessToken, refreshToken };
-}
-
-async function createStoredSession(client, userId) {
-  const result = await client.query(
-    `SELECT id, token_version, refresh_sessions, account_status
-       FROM users
-      WHERE id = $1 AND deleted_at IS NULL
-      FOR UPDATE`,
-    [userId]
-  );
-  if (result.rowCount !== 1 || result.rows[0].account_status !== "active") {
-    throw new Error("account_unavailable");
-  }
-  const user = result.rows[0];
-  const now = Date.now();
-  let sessions = safeJsonArray(user.refresh_sessions).filter(session =>
-    session && typeof session.sid === "string" &&
-    typeof session.expiresAt === "string" &&
-    Date.parse(session.expiresAt) > now
-  );
-  while (sessions.length >= AUTH_MAX_SESSIONS_PER_USER) sessions.shift();
-  const sid = crypto.randomUUID();
-  const tokens = createTokenPair(user, sid);
-  sessions.push({
-    sid,
-    tokenHash: sha256Hex(tokens.refreshToken),
-    expiresAt: new Date(now + AUTH_REFRESH_TTL_SECONDS * 1000).toISOString(),
-    createdAt: new Date(now).toISOString(),
-  });
-  await client.query(
-    `UPDATE users
-        SET refresh_sessions = $2::jsonb,
-            updated_at = NOW()
-      WHERE id = $1`,
-    [userId, JSON.stringify(sessions)]
-  );
-  return tokens;
-}
-
-function authRateLimit(options = {}) {
-  const windowMs = options.windowMs || 15 * 60 * 1000;
-  const max = options.max || 10;
-  const buckets = new Map();
-  return (req, res, next) => {
-    const now = Date.now();
-    const key = String(req.ip || req.socket.remoteAddress || "unknown");
-    let bucket = buckets.get(key);
-    if (!bucket || bucket.resetAt <= now) {
-      bucket = { count: 0, resetAt: now + windowMs };
-      buckets.set(key, bucket);
-    }
-    bucket.count += 1;
-    if (buckets.size > 10000) {
-      for (const [ip, entry] of buckets) {
-        if (entry.resetAt <= now) buckets.delete(ip);
-      }
-    }
-    res.set("RateLimit-Limit", String(max));
-    res.set("RateLimit-Remaining", String(Math.max(0, max - bucket.count)));
-    res.set("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
-    if (bucket.count > max) {
-      return res.status(429).json({
-        ok: false,
-        error: "too_many_requests",
-        message: "Too many authentication attempts. Please try again later.",
-      });
-    }
-    return next();
-  };
-}
-
-const loginRateLimit = authRateLimit({ max: 10 });
-const signupRateLimit = authRateLimit({ max: 5 });
-const googleRateLimit = authRateLimit({ max: 15 });
-
-async function requireAuth(req, res, next) {
-  try {
-    const authorization = String(req.headers.authorization || "");
-    const match = authorization.match(/^Bearer\s+(.+)$/i);
-    if (!match) {
-      return res.status(401).json({ ok: false, error: "authentication_required" });
-    }
-    const claims = verifyJwt(match[1], AUTH_ACCESS_SECRET, "access");
-    const result = await pool.query(
-      `SELECT id, name, email, phone_number, sign_in_method, role,
-              account_status, subscription_status, subscription_start,
-              subscription_end, auto_renew, subscription_data,
-              email_verified, phone_verified, country, profile_image,
-              created_at, last_login_at, token_version,
-              EXISTS (
-                SELECT 1
-                  FROM jsonb_array_elements(refresh_sessions) AS session
-                 WHERE session->>'sid' = $2
-                   AND (session->>'expiresAt')::timestamptz > NOW()
-              ) AS session_active
-         FROM users
-        WHERE id = $1 AND deleted_at IS NULL
-        LIMIT 1`,
-      [claims.sub, claims.sid]
-    );
-    if (result.rowCount !== 1) {
-      return res.status(401).json({ ok: false, error: "invalid_session" });
-    }
-    const user = result.rows[0];
-    if (
-      user.account_status !== "active" ||
-      Number(user.token_version) !== Number(claims.ver) ||
-      !user.session_active
-    ) {
-      return res.status(401).json({ ok: false, error: "session_expired" });
-    }
-    req.auth = { claims, user };
-    return next();
-  } catch (error) {
-    if (error.message === "invalid_token") {
-      return res.status(401).json({ ok: false, error: "invalid_or_expired_token" });
-    }
-    console.error("Authentication middleware error:", error.message);
-    return res.status(500).json({ ok: false, error: "authentication_unavailable" });
-  }
-}
-
-const googleAuthClient = new OAuth2Client();
-
-async function verifyGoogleIdToken(idToken) {
-  if (GOOGLE_CLIENT_IDS.size === 0) {
-    const error = new Error("google_sign_in_not_configured");
-    error.statusCode = 503;
-    throw error;
-  }
-  if (typeof idToken !== "string" || idToken.length > 16384) {
-    const error = new Error("invalid_google_token");
-    error.statusCode = 401;
-    throw error;
-  }
-
-  let payload;
-  try {
-    const ticket = await googleAuthClient.verifyIdToken({
-      idToken,
-      audience: Array.from(GOOGLE_CLIENT_IDS),
-    });
-    payload = ticket.getPayload();
-  } catch (verificationError) {
-    const networkFailure = Boolean(
-      verificationError && (
-        verificationError.code === "ECONNRESET" ||
-        verificationError.code === "ECONNREFUSED" ||
-        verificationError.code === "ETIMEDOUT" ||
-        verificationError.code === "EAI_AGAIN" ||
-        verificationError.code === "ENOTFOUND" ||
-        verificationError.code === "ECONNABORTED" ||
-        verificationError.response
-      )
-    );
-    const error = new Error(networkFailure ? "google_keys_unavailable" : "invalid_google_token");
-    error.statusCode = networkFailure ? 503 : 401;
-    throw error;
-  }
-
-  const email = normalizeEmail(payload && payload.email);
-  const emailVerified = payload && (
-    payload.email_verified === true || payload.email_verified === "true"
-  );
-  const authorizedPartyValid = !payload || !payload.azp || GOOGLE_CLIENT_IDS.has(payload.azp);
-
-  if (
-    !payload ||
-    typeof payload.sub !== "string" || payload.sub.length < 5 || payload.sub.length > 255 ||
-    !email || !emailVerified || !authorizedPartyValid
-  ) {
-    const error = new Error("invalid_google_token");
-    error.statusCode = 401;
-    throw error;
-  }
-
-  let picture = null;
-  if (typeof payload.picture === "string" && payload.picture.length <= 2048) {
-    try {
-      const pictureUrl = new URL(payload.picture);
-      if (pictureUrl.protocol === "https:") picture = pictureUrl.toString();
-    } catch (_) {
-      picture = null;
-    }
-  }
-
-  return {
-    sub: payload.sub,
-    email,
-    name: typeof payload.name === "string" && payload.name.trim()
-      ? payload.name.trim().slice(0, 160)
-      : email.split("@")[0],
-    picture,
-  };
-}
-
-function authErrorResponse(res, error, fallback = "authentication_failed") {
-  const status = Number.isInteger(error.statusCode) ? error.statusCode : 500;
-  const known = new Set([
-    "google_sign_in_not_configured",
-    "invalid_google_token",
-    "google_keys_unavailable",
-    "google_keys_invalid",
-    "account_unavailable",
-  ]);
-  const code = known.has(error.message) ? error.message : fallback;
-  return res.status(status).json({ ok: false, error: code });
-}
-
-async function registerWithEmail(req, res) {
-  const body = req.body || {};
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  const email = normalizeEmail(body.email);
-  const password = body.password;
-  if (name.length < 2 || name.length > 160 || !email || !validatePassword(password)) {
-    return res.status(400).json({
-      ok: false,
-      error: "invalid_registration_details",
-      message: "Provide a valid name, email address, and password of at least 10 characters and no more than 72 UTF-8 bytes.",
-    });
-  }
-  const phoneNumber = typeof body.phoneNumber === "string" ? body.phoneNumber.trim().slice(0, 40) : null;
-  const country = typeof body.country === "string" && /^[A-Za-z]{2}$/.test(body.country.trim())
-    ? body.country.trim().toUpperCase()
-    : null;
-  const passwordHash = await hashPassword(password);
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const inserted = await client.query(
-      `INSERT INTO users (
-         id, name, email, password_hash, phone_number,
-         sign_in_method, role, account_status, subscription_status,
-         subscription_data, email_verified, country
-       ) VALUES ($1, $2, $3, $4, $5, 'password', 'user', 'active', 'free',
-                 '{"plan":"free"}'::jsonb, FALSE, $6)
-       RETURNING id`,
-      [createPublicId("USR"), name, email, passwordHash, phoneNumber, country]
-    );
-    const userId = inserted.rows[0].id;
-    const tokens = await createStoredSession(client, userId);
-    const userResult = await client.query(
-      `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
-        WHERE id = $1
-        RETURNING id, name, email, phone_number, sign_in_method, role,
-                  account_status, subscription_status, subscription_start,
-                  subscription_end, auto_renew, subscription_data,
-                  email_verified, phone_verified, country, profile_image,
-                  created_at, last_login_at`,
-      [userId]
-    );
-    await client.query("COMMIT");
-    return res.status(201).json({
-      ok: true,
-      message: "Account created successfully.",
-      ...tokens,
-      tokenType: "Bearer",
-      expiresIn: AUTH_ACCESS_TTL_SECONDS,
-      user: publicUser(userResult.rows[0]),
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    if (error.code === "23505") {
-      return res.status(409).json({ ok: false, error: "email_already_registered" });
-    }
-    if (error.message === "account_unavailable") {
-      return res.status(403).json({ ok: false, error: "account_unavailable" });
-    }
-    console.error("Registration error:", error.message);
-    return res.status(500).json({ ok: false, error: "registration_failed" });
-  } finally {
-    client.release();
-  }
-}
-
-async function loginWithEmail(req, res) {
-  const email = normalizeEmail(req.body && req.body.email);
-  const password = req.body && req.body.password;
-  if (!email || typeof password !== "string" || Buffer.byteLength(password, "utf8") > 72) {
-    return res.status(400).json({ ok: false, error: "invalid_login_details" });
-  }
-  try {
-    const result = await pool.query(
-      `SELECT id, password_hash, account_status
-         FROM users
-        WHERE LOWER(email) = $1 AND deleted_at IS NULL
-        LIMIT 1`,
-      [email]
-    );
-    if (result.rowCount !== 1 || !result.rows[0].password_hash) {
-      return res.status(401).json({ ok: false, error: "invalid_credentials" });
-    }
-    const user = result.rows[0];
-    const passwordValid = await verifyPassword(password, user.password_hash);
-    if (!passwordValid || user.account_status !== "active") {
-      return res.status(401).json({ ok: false, error: "invalid_credentials" });
-    }
-    if (user.password_hash.startsWith("scrypt$")) {
-      const upgradedHash = await hashPassword(password);
-      await pool.query(
-        `UPDATE users SET password_hash = $2, updated_at = NOW()
-          WHERE id = $1 AND password_hash = $3`,
-        [user.id, upgradedHash, user.password_hash]
-      );
-    }
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      const tokens = await createStoredSession(client, user.id);
-      const updated = await client.query(
-        `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
-          WHERE id = $1 AND account_status = 'active' AND deleted_at IS NULL
-          RETURNING id, name, email, phone_number, sign_in_method, role,
-                    account_status, subscription_status, subscription_start,
-                    subscription_end, auto_renew, subscription_data,
-                    email_verified, phone_verified, country, profile_image,
-                    created_at, last_login_at`,
-        [user.id]
-      );
-      if (updated.rowCount !== 1) throw new Error("account_unavailable");
-      await client.query("COMMIT");
-      return res.json({
-        ok: true,
-        ...tokens,
-        tokenType: "Bearer",
-        expiresIn: AUTH_ACCESS_TTL_SECONDS,
-        user: publicUser(updated.rows[0]),
-      });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      if (error.message === "account_unavailable") {
-        return res.status(403).json({ ok: false, error: "account_unavailable" });
-      }
-      throw error;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    console.error("Login error:", error.message);
-    return res.status(500).json({ ok: false, error: "login_failed" });
-  }
-}
-
-async function loginWithGoogle(req, res) {
-  let googleIdentity;
-  try {
-    googleIdentity = await verifyGoogleIdToken(req.body && req.body.idToken);
-  } catch (error) {
-    return authErrorResponse(res, error, "google_verification_failed");
-  }
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    let found = await client.query(
-      `SELECT id FROM users
-        WHERE sign_in_id = $1 AND deleted_at IS NULL
-        LIMIT 1`,
-      [googleIdentity.sub]
-    );
-    let userId;
-    if (found.rowCount === 1) {
-      userId = found.rows[0].id;
-    } else {
-      const byEmail = await client.query(
-        `SELECT id, sign_in_id, password_hash
-           FROM users
-          WHERE LOWER(email) = $1 AND deleted_at IS NULL
-          LIMIT 1
-          FOR UPDATE`,
-        [googleIdentity.email]
-      );
-      if (byEmail.rowCount === 1) {
-        await client.query("ROLLBACK");
-        return res.status(409).json({
-          ok: false,
-          error: "account_link_required",
-          message: "An account already exists for this email. Sign in with that account, then link Google from account settings.",
-        });
-      }
-      const inserted = await client.query(
-        `INSERT INTO users (
-           id, name, email, sign_in_method, sign_in_id,
-           role, account_status, subscription_status,
-           subscription_data, email_verified, profile_image
-         ) VALUES ($1, $2, $3, 'google', $4, 'user', 'active', 'free',
-                   '{"plan":"free"}'::jsonb, TRUE, $5)
-         RETURNING id`,
-        [createPublicId("USR"), googleIdentity.name, googleIdentity.email, googleIdentity.sub, googleIdentity.picture]
-      );
-      userId = inserted.rows[0].id;
-    }
-    const tokens = await createStoredSession(client, userId);
-    const updated = await client.query(
-      `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
-        WHERE id = $1 AND account_status = 'active' AND deleted_at IS NULL
-        RETURNING id, name, email, phone_number, sign_in_method, role,
-                  account_status, subscription_status, subscription_start,
-                  subscription_end, auto_renew, subscription_data,
-                  email_verified, phone_verified, country, profile_image,
-                  created_at, last_login_at`,
-      [userId]
-    );
-    if (updated.rowCount !== 1) throw new Error("account_unavailable");
-    await client.query("COMMIT");
-    return res.json({
-      ok: true,
-      ...tokens,
-      tokenType: "Bearer",
-      expiresIn: AUTH_ACCESS_TTL_SECONDS,
-      user: publicUser(updated.rows[0]),
-      isNewUser: found.rowCount === 0,
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    if (error.code === "23505") {
-      return res.status(409).json({ ok: false, error: "account_conflict" });
-    }
-    if (error.message === "account_unavailable") {
-      return res.status(403).json({ ok: false, error: "account_unavailable" });
-    }
-    console.error("Google sign-in error:", error.message);
-    return res.status(500).json({ ok: false, error: "google_sign_in_failed" });
-  } finally {
-    client.release();
-  }
-}
-
-app.post("/api/auth/register", signupRateLimit, registerWithEmail);
-app.post("/api/auth/signup", signupRateLimit, registerWithEmail);
-app.post("/api/auth/login", loginRateLimit, loginWithEmail);
-app.post("/api/auth/google", googleRateLimit, loginWithGoogle);
-
-app.post("/api/auth/google/link", requireAuth, googleRateLimit, async (req, res) => {
-  let identity;
-  try {
-    identity = await verifyGoogleIdToken(req.body && req.body.idToken);
-  } catch (error) {
-    return authErrorResponse(res, error, "google_verification_failed");
-  }
-  if (identity.email !== req.auth.user.email) {
-    return res.status(409).json({ ok: false, error: "google_email_mismatch" });
-  }
-  try {
-    const result = await pool.query(
-      `UPDATE users
-          SET sign_in_id = $2,
-              sign_in_method = CASE
-                WHEN password_hash IS NULL THEN 'google'
-                ELSE 'password+google'
-              END,
-              email_verified = TRUE,
-              profile_image = COALESCE(profile_image, $3),
-              updated_at = NOW()
-        WHERE id = $1 AND deleted_at IS NULL
-          AND (sign_in_id IS NULL OR sign_in_id = $2)
-        RETURNING id, sign_in_method`,
-      [req.auth.user.id, identity.sub, identity.picture]
-    );
-    if (result.rowCount !== 1) {
-      return res.status(409).json({ ok: false, error: "google_account_already_linked" });
-    }
-    return res.json({ ok: true, message: "Google account linked successfully." });
-  } catch (error) {
-    if (error.code === "23505") {
-      return res.status(409).json({ ok: false, error: "google_account_already_linked" });
-    }
-    console.error("Google account linking error:", error.message);
-    return res.status(500).json({ ok: false, error: "google_link_failed" });
-  }
-});
-
-app.post("/api/auth/refresh", loginRateLimit, async (req, res) => {
-  const refreshToken = req.body && req.body.refreshToken;
-  let claims;
-  try {
-    claims = verifyJwt(refreshToken, AUTH_REFRESH_SECRET, "refresh");
-  } catch (_) {
-    return res.status(401).json({ ok: false, error: "invalid_or_expired_refresh_token" });
-  }
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await client.query(
-      `SELECT id, token_version, account_status, refresh_sessions
-         FROM users
-        WHERE id = $1 AND deleted_at IS NULL
-        FOR UPDATE`,
-      [claims.sub]
-    );
-    if (result.rowCount !== 1 || result.rows[0].account_status !== "active" ||
-        Number(result.rows[0].token_version) !== Number(claims.ver)) {
-      await client.query("ROLLBACK");
-      return res.status(401).json({ ok: false, error: "invalid_or_expired_refresh_token" });
-    }
-    const user = result.rows[0];
-    const sessions = safeJsonArray(user.refresh_sessions);
-    const current = sessions.find(session => session.sid === claims.sid);
-    if (!current || Date.parse(current.expiresAt) <= Date.now() ||
-        !timingSafeStringEqual(current.tokenHash, sha256Hex(refreshToken))) {
-      await client.query("ROLLBACK");
-      return res.status(401).json({ ok: false, error: "invalid_or_expired_refresh_token" });
-    }
-    const tokens = createTokenPair(user, claims.sid);
-    const nextSessions = sessions.map(session => session.sid === claims.sid
-      ? { ...session, tokenHash: sha256Hex(tokens.refreshToken), expiresAt: new Date(Date.now() + AUTH_REFRESH_TTL_SECONDS * 1000).toISOString() }
-      : session
-    );
-    await client.query(
-      `UPDATE users SET refresh_sessions = $2::jsonb, updated_at = NOW() WHERE id = $1`,
-      [user.id, JSON.stringify(nextSessions)]
-    );
-    await client.query("COMMIT");
-    return res.json({
-      ok: true,
-      ...tokens,
-      tokenType: "Bearer",
-      expiresIn: AUTH_ACCESS_TTL_SECONDS,
-    });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("Token refresh error:", error.message);
-    return res.status(500).json({ ok: false, error: "token_refresh_failed" });
-  } finally {
-    client.release();
-  }
-});
-
-app.post("/api/auth/logout", requireAuth, async (req, res) => {
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
-    const result = await client.query(
-      `SELECT refresh_sessions FROM users WHERE id = $1 FOR UPDATE`,
-      [req.auth.user.id]
-    );
-    if (result.rowCount === 1) {
-      const sessions = safeJsonArray(result.rows[0].refresh_sessions);
-      const remaining = req.body && req.body.allDevices === true
-        ? []
-        : sessions.filter(session => session.sid !== req.auth.claims.sid);
-      await client.query(
-        `UPDATE users
-            SET refresh_sessions = $2::jsonb,
-                token_version = CASE WHEN $3 THEN token_version + 1 ELSE token_version END,
-                updated_at = NOW()
-          WHERE id = $1`,
-        [req.auth.user.id, JSON.stringify(remaining), req.body && req.body.allDevices === true]
-      );
-    }
-    await client.query("COMMIT");
-    return res.json({ ok: true, message: "Signed out successfully." });
-  } catch (error) {
-    await client.query("ROLLBACK");
-    console.error("Logout error:", error.message);
-    return res.status(500).json({ ok: false, error: "logout_failed" });
-  } finally {
-    client.release();
-  }
-});
-
-app.get("/api/auth/me", requireAuth, (req, res) => {
-  return res.json({ ok: true, user: publicUser(req.auth.user) });
-});
-
-app.get("/api/subscription", requireAuth, (req, res) => {
-  return res.json({ ok: true, subscription: publicSubscription(req.auth.user) });
-});
-
-// These operations deliberately do not claim success until an email delivery
-// provider and verification/reset token delivery flow are configured.
-app.post("/api/auth/forgot-password", loginRateLimit, (req, res) => {
-  return res.status(503).json({
-    ok: false,
-    error: "password_reset_delivery_not_configured",
-    message: "Password reset is unavailable until a verified email delivery provider is configured.",
-  });
-});
-app.post("/api/auth/password-reset/request", loginRateLimit, (req, res) => {
-  return res.status(503).json({
-    ok: false,
-    error: "password_reset_delivery_not_configured",
-    message: "Password reset is unavailable until a verified email delivery provider is configured.",
-  });
-});
 
 /* ============================================================
    WEBSITE + DOWNLOADS
@@ -6174,6 +5356,819 @@ wss.on(
 );
 
 /* ============================================================
+   AUTHENTICATION + USER ACCOUNTS
+   ============================================================ */
+
+const AUTH_ISSUER = "https://api.kyros.app";
+const AUTH_AUDIENCE = "kyros-api";
+const AUTH_ACCESS_TTL_SECONDS = 15 * 60;
+const AUTH_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60;
+const AUTH_MAX_SESSIONS_PER_USER = 10;
+const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
+const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
+  ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
+  : null;
+const AUTH_REFRESH_SECRET = AUTH_JWT_SECRET
+  ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-refresh-v1").digest()
+  : null;
+const GOOGLE_CLIENT_IDS = new Set(
+  String(process.env.GOOGLE_CLIENT_IDS || "")
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean)
+);
+
+function authConfigured(req, res, next) {
+  if (!AUTH_ACCESS_SECRET || !AUTH_REFRESH_SECRET || Buffer.byteLength(AUTH_JWT_SECRET, "utf8") < 64) {
+    return res.status(503).json({
+      ok: false,
+      error: "authentication_not_configured",
+      message: "Set AUTH_JWT_SECRET to a random secret of at least 64 characters.",
+    });
+  }
+  return next();
+}
+
+function createPublicId(prefix) {
+  return `${prefix}${crypto.randomBytes(16).toString("hex")}`;
+}
+
+function normalizeEmail(value) {
+  if (typeof value !== "string") return null;
+  const email = value.trim().toLowerCase();
+  if (email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return null;
+  }
+  return email;
+}
+
+const BCRYPT_ROUNDS = 12;
+
+function validatePassword(value) {
+  return typeof value === "string" &&
+    value.length >= 10 &&
+    Buffer.byteLength(value, "utf8") <= 72 &&
+    !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+async function hashPassword(password) {
+  return bcrypt.hash(password, BCRYPT_ROUNDS);
+}
+
+// Compatibility for accounts created by the previous pre-release backend.
+// New accounts always use bcrypt; a successful legacy login is upgraded.
+const scryptAsync = (password, salt, keyLength, options) =>
+  new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, keyLength, options, (error, derivedKey) => {
+      if (error) reject(error);
+      else resolve(derivedKey);
+    });
+  });
+
+async function verifyLegacyScryptPassword(password, encoded) {
+  const parts = encoded.split("$");
+  if (parts.length !== 6 || parts[0] !== "scrypt") return false;
+  const cost = Number(parts[1]);
+  const blockSize = Number(parts[2]);
+  const parallelization = Number(parts[3]);
+  if (
+    !Number.isInteger(cost) || cost < 16384 || cost > 131072 ||
+    !Number.isInteger(blockSize) || blockSize < 1 || blockSize > 16 ||
+    !Number.isInteger(parallelization) || parallelization < 1 || parallelization > 4
+  ) return false;
+  let salt;
+  let expected;
+  try {
+    salt = Buffer.from(parts[4], "base64url");
+    expected = Buffer.from(parts[5], "base64url");
+  } catch (_) {
+    return false;
+  }
+  if (salt.length < 16 || expected.length !== 64) return false;
+  const actual = await scryptAsync(password, salt, expected.length, {
+    N: cost,
+    r: blockSize,
+    p: parallelization,
+    maxmem: 64 * 1024 * 1024,
+  });
+  return crypto.timingSafeEqual(actual, expected);
+}
+
+async function verifyPassword(password, encoded) {
+  if (typeof encoded !== "string") return false;
+  if (/^\$2[aby]\$/.test(encoded)) {
+    return bcrypt.compare(password, encoded);
+  }
+  if (encoded.startsWith("scrypt$")) {
+    return verifyLegacyScryptPassword(password, encoded);
+  }
+  return false;
+}
+
+function signJwt(payload, secret, ttlSeconds) {
+  return jwt.sign(payload, secret, {
+    algorithm: "HS256",
+    issuer: AUTH_ISSUER,
+    audience: AUTH_AUDIENCE,
+    expiresIn: ttlSeconds,
+  });
+}
+
+function verifyJwt(token, secret, expectedUse) {
+  if (typeof token !== "string" || token.length > 8192) {
+    throw new Error("invalid_token");
+  }
+  try {
+    const claims = jwt.verify(token, secret, {
+      algorithms: ["HS256"],
+      issuer: AUTH_ISSUER,
+      audience: AUTH_AUDIENCE,
+      clockTolerance: 5,
+    });
+    if (
+      !claims || typeof claims !== "object" ||
+      claims.token_use !== expectedUse ||
+      typeof claims.sub !== "string" ||
+      typeof claims.sid !== "string" ||
+      typeof claims.jti !== "string"
+    ) {
+      throw new Error("invalid_token");
+    }
+    return claims;
+  } catch (_) {
+    throw new Error("invalid_token");
+  }
+}
+
+function sha256Hex(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function timingSafeStringEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  const a = Buffer.from(left, "utf8");
+  const b = Buffer.from(right, "utf8");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function safeJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      return [];
+    }
+  }
+  return [];
+}
+
+function publicSubscription(user) {
+  let data = user.subscription_data || {};
+  if (typeof data === "string") {
+    try { data = JSON.parse(data); } catch (_) { data = {}; }
+  }
+  return {
+    plan: typeof data.plan === "string" ? data.plan : "free",
+    status: user.subscription_status || "free",
+    startDate: user.subscription_start || null,
+    endDate: user.subscription_end || null,
+    autoRenew: Boolean(user.auto_renew),
+  };
+}
+
+function publicUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phoneNumber: user.phone_number || null,
+    signInMethod: user.sign_in_method,
+    role: user.role,
+    accountStatus: user.account_status,
+    subscription: publicSubscription(user),
+    emailVerified: Boolean(user.email_verified),
+    phoneVerified: Boolean(user.phone_verified),
+    country: user.country || null,
+    profileImage: user.profile_image || null,
+    createdAt: user.created_at,
+    lastLoginAt: user.last_login_at || null,
+  };
+}
+
+function createTokenPair(user, sessionId) {
+  const common = {
+    sub: user.id,
+    sid: sessionId,
+    ver: Number(user.token_version || 1),
+    jti: crypto.randomUUID(),
+  };
+  const accessToken = signJwt(
+    { ...common, token_use: "access" },
+    AUTH_ACCESS_SECRET,
+    AUTH_ACCESS_TTL_SECONDS
+  );
+  const refreshToken = signJwt(
+    { ...common, token_use: "refresh" },
+    AUTH_REFRESH_SECRET,
+    AUTH_REFRESH_TTL_SECONDS
+  );
+  return { accessToken, refreshToken };
+}
+
+async function createStoredSession(client, userId) {
+  const result = await client.query(
+    `SELECT id, token_version, refresh_sessions, account_status
+       FROM users
+      WHERE id = $1 AND deleted_at IS NULL
+      FOR UPDATE`,
+    [userId]
+  );
+  if (result.rowCount !== 1 || result.rows[0].account_status !== "active") {
+    throw new Error("account_unavailable");
+  }
+  const user = result.rows[0];
+  const now = Date.now();
+  let sessions = safeJsonArray(user.refresh_sessions).filter(session =>
+    session && typeof session.sid === "string" &&
+    typeof session.expiresAt === "string" &&
+    Date.parse(session.expiresAt) > now
+  );
+  while (sessions.length >= AUTH_MAX_SESSIONS_PER_USER) sessions.shift();
+  const sid = crypto.randomUUID();
+  const tokens = createTokenPair(user, sid);
+  sessions.push({
+    sid,
+    tokenHash: sha256Hex(tokens.refreshToken),
+    expiresAt: new Date(now + AUTH_REFRESH_TTL_SECONDS * 1000).toISOString(),
+    createdAt: new Date(now).toISOString(),
+  });
+  await client.query(
+    `UPDATE users
+        SET refresh_sessions = $2::jsonb,
+            updated_at = NOW()
+      WHERE id = $1`,
+    [userId, JSON.stringify(sessions)]
+  );
+  return tokens;
+}
+
+function authRateLimit(options = {}) {
+  const windowMs = options.windowMs || 15 * 60 * 1000;
+  const max = options.max || 10;
+  const buckets = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = String(req.ip || req.socket.remoteAddress || "unknown");
+    let bucket = buckets.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      bucket = { count: 0, resetAt: now + windowMs };
+      buckets.set(key, bucket);
+    }
+    bucket.count += 1;
+    if (buckets.size > 10000) {
+      for (const [ip, entry] of buckets) {
+        if (entry.resetAt <= now) buckets.delete(ip);
+      }
+    }
+    res.set("RateLimit-Limit", String(max));
+    res.set("RateLimit-Remaining", String(Math.max(0, max - bucket.count)));
+    res.set("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
+    if (bucket.count > max) {
+      return res.status(429).json({
+        ok: false,
+        error: "too_many_requests",
+        message: "Too many authentication attempts. Please try again later.",
+      });
+    }
+    return next();
+  };
+}
+
+const loginRateLimit = authRateLimit({ max: 10 });
+const signupRateLimit = authRateLimit({ max: 5 });
+const googleRateLimit = authRateLimit({ max: 15 });
+
+async function requireAuth(req, res, next) {
+  if (!AUTH_ACCESS_SECRET || !AUTH_REFRESH_SECRET || Buffer.byteLength(AUTH_JWT_SECRET, "utf8") < 64) {
+    return res.status(503).json({
+      ok: false,
+      error: "authentication_not_configured",
+      message: "Set AUTH_JWT_SECRET to a random secret of at least 64 characters.",
+    });
+  }
+  try {
+    const authorization = String(req.headers.authorization || "");
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    if (!match) {
+      return res.status(401).json({ ok: false, error: "authentication_required" });
+    }
+    const claims = verifyJwt(match[1], AUTH_ACCESS_SECRET, "access");
+    const result = await pool.query(
+      `SELECT id, name, email, phone_number, sign_in_method, role,
+              account_status, subscription_status, subscription_start,
+              subscription_end, auto_renew, subscription_data,
+              email_verified, phone_verified, country, profile_image,
+              created_at, last_login_at, token_version,
+              EXISTS (
+                SELECT 1
+                  FROM jsonb_array_elements(refresh_sessions) AS session
+                 WHERE session->>'sid' = $2
+                   AND (session->>'expiresAt')::timestamptz > NOW()
+              ) AS session_active
+         FROM users
+        WHERE id = $1 AND deleted_at IS NULL
+        LIMIT 1`,
+      [claims.sub, claims.sid]
+    );
+    if (result.rowCount !== 1) {
+      return res.status(401).json({ ok: false, error: "invalid_session" });
+    }
+    const user = result.rows[0];
+    if (
+      user.account_status !== "active" ||
+      Number(user.token_version) !== Number(claims.ver) ||
+      !user.session_active
+    ) {
+      return res.status(401).json({ ok: false, error: "session_expired" });
+    }
+    req.auth = { claims, user };
+    return next();
+  } catch (error) {
+    if (error.message === "invalid_token") {
+      return res.status(401).json({ ok: false, error: "invalid_or_expired_token" });
+    }
+    console.error("Authentication middleware error:", error.message);
+    return res.status(500).json({ ok: false, error: "authentication_unavailable" });
+  }
+}
+
+const googleAuthClient = new OAuth2Client();
+
+async function verifyGoogleIdToken(idToken) {
+  if (GOOGLE_CLIENT_IDS.size === 0) {
+    const error = new Error("google_sign_in_not_configured");
+    error.statusCode = 503;
+    throw error;
+  }
+  if (typeof idToken !== "string" || idToken.length > 16384) {
+    const error = new Error("invalid_google_token");
+    error.statusCode = 401;
+    throw error;
+  }
+
+  let payload;
+  try {
+    const ticket = await googleAuthClient.verifyIdToken({
+      idToken,
+      audience: Array.from(GOOGLE_CLIENT_IDS),
+    });
+    payload = ticket.getPayload();
+  } catch (verificationError) {
+    const networkFailure = Boolean(
+      verificationError && (
+        verificationError.code === "ECONNRESET" ||
+        verificationError.code === "ECONNREFUSED" ||
+        verificationError.code === "ETIMEDOUT" ||
+        verificationError.code === "EAI_AGAIN" ||
+        verificationError.code === "ENOTFOUND" ||
+        verificationError.code === "ECONNABORTED" ||
+        verificationError.response
+      )
+    );
+    const error = new Error(networkFailure ? "google_keys_unavailable" : "invalid_google_token");
+    error.statusCode = networkFailure ? 503 : 401;
+    throw error;
+  }
+
+  const email = normalizeEmail(payload && payload.email);
+  const emailVerified = payload && (
+    payload.email_verified === true || payload.email_verified === "true"
+  );
+  const authorizedPartyValid = !payload || !payload.azp || GOOGLE_CLIENT_IDS.has(payload.azp);
+
+  if (
+    !payload ||
+    typeof payload.sub !== "string" || payload.sub.length < 5 || payload.sub.length > 255 ||
+    !email || !emailVerified || !authorizedPartyValid
+  ) {
+    const error = new Error("invalid_google_token");
+    error.statusCode = 401;
+    throw error;
+  }
+
+  let picture = null;
+  if (typeof payload.picture === "string" && payload.picture.length <= 2048) {
+    try {
+      const pictureUrl = new URL(payload.picture);
+      if (pictureUrl.protocol === "https:") picture = pictureUrl.toString();
+    } catch (_) {
+      picture = null;
+    }
+  }
+
+  return {
+    sub: payload.sub,
+    email,
+    name: typeof payload.name === "string" && payload.name.trim()
+      ? payload.name.trim().slice(0, 160)
+      : email.split("@")[0],
+    picture,
+  };
+}
+
+function authErrorResponse(res, error, fallback = "authentication_failed") {
+  const status = Number.isInteger(error.statusCode) ? error.statusCode : 500;
+  const known = new Set([
+    "google_sign_in_not_configured",
+    "invalid_google_token",
+    "google_keys_unavailable",
+    "google_keys_invalid",
+    "account_unavailable",
+  ]);
+  const code = known.has(error.message) ? error.message : fallback;
+  return res.status(status).json({ ok: false, error: code });
+}
+
+async function registerWithEmail(req, res) {
+  const body = req.body || {};
+  const name = typeof body.name === "string" ? body.name.trim() : "";
+  const email = normalizeEmail(body.email);
+  const password = body.password;
+  if (name.length < 2 || name.length > 160 || !email || !validatePassword(password)) {
+    return res.status(400).json({
+      ok: false,
+      error: "invalid_registration_details",
+      message: "Provide a valid name, email address, and password of at least 10 characters and no more than 72 UTF-8 bytes.",
+    });
+  }
+  const phoneNumber = typeof body.phoneNumber === "string" ? body.phoneNumber.trim().slice(0, 40) : null;
+  const country = typeof body.country === "string" && /^[A-Za-z]{2}$/.test(body.country.trim())
+    ? body.country.trim().toUpperCase()
+    : null;
+  const passwordHash = await hashPassword(password);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const inserted = await client.query(
+      `INSERT INTO users (
+         id, name, email, password_hash, phone_number,
+         sign_in_method, role, account_status, subscription_status,
+         subscription_data, email_verified, country
+       ) VALUES ($1, $2, $3, $4, $5, 'password', 'user', 'active', 'free',
+                 '{"plan":"free"}'::jsonb, FALSE, $6)
+       RETURNING id`,
+      [createPublicId("USR"), name, email, passwordHash, phoneNumber, country]
+    );
+    const userId = inserted.rows[0].id;
+    const tokens = await createStoredSession(client, userId);
+    const userResult = await client.query(
+      `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
+        WHERE id = $1
+        RETURNING id, name, email, phone_number, sign_in_method, role,
+                  account_status, subscription_status, subscription_start,
+                  subscription_end, auto_renew, subscription_data,
+                  email_verified, phone_verified, country, profile_image,
+                  created_at, last_login_at`,
+      [userId]
+    );
+    await client.query("COMMIT");
+    return res.status(201).json({
+      ok: true,
+      message: "Account created successfully.",
+      ...tokens,
+      tokenType: "Bearer",
+      expiresIn: AUTH_ACCESS_TTL_SECONDS,
+      user: publicUser(userResult.rows[0]),
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (error.code === "23505") {
+      return res.status(409).json({ ok: false, error: "email_already_registered" });
+    }
+    if (error.message === "account_unavailable") {
+      return res.status(403).json({ ok: false, error: "account_unavailable" });
+    }
+    console.error("Registration error:", error.message);
+    return res.status(500).json({ ok: false, error: "registration_failed" });
+  } finally {
+    client.release();
+  }
+}
+
+async function loginWithEmail(req, res) {
+  const email = normalizeEmail(req.body && req.body.email);
+  const password = req.body && req.body.password;
+  if (!email || typeof password !== "string" || Buffer.byteLength(password, "utf8") > 72) {
+    return res.status(400).json({ ok: false, error: "invalid_login_details" });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, password_hash, account_status
+         FROM users
+        WHERE LOWER(email) = $1 AND deleted_at IS NULL
+        LIMIT 1`,
+      [email]
+    );
+    if (result.rowCount !== 1 || !result.rows[0].password_hash) {
+      return res.status(401).json({ ok: false, error: "invalid_credentials" });
+    }
+    const user = result.rows[0];
+    const passwordValid = await verifyPassword(password, user.password_hash);
+    if (!passwordValid || user.account_status !== "active") {
+      return res.status(401).json({ ok: false, error: "invalid_credentials" });
+    }
+    if (user.password_hash.startsWith("scrypt$")) {
+      const upgradedHash = await hashPassword(password);
+      await pool.query(
+        `UPDATE users SET password_hash = $2, updated_at = NOW()
+          WHERE id = $1 AND password_hash = $3`,
+        [user.id, upgradedHash, user.password_hash]
+      );
+    }
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const tokens = await createStoredSession(client, user.id);
+      const updated = await client.query(
+        `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
+          WHERE id = $1 AND account_status = 'active' AND deleted_at IS NULL
+          RETURNING id, name, email, phone_number, sign_in_method, role,
+                    account_status, subscription_status, subscription_start,
+                    subscription_end, auto_renew, subscription_data,
+                    email_verified, phone_verified, country, profile_image,
+                    created_at, last_login_at`,
+        [user.id]
+      );
+      if (updated.rowCount !== 1) throw new Error("account_unavailable");
+      await client.query("COMMIT");
+      return res.json({
+        ok: true,
+        ...tokens,
+        tokenType: "Bearer",
+        expiresIn: AUTH_ACCESS_TTL_SECONDS,
+        user: publicUser(updated.rows[0]),
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (error.message === "account_unavailable") {
+        return res.status(403).json({ ok: false, error: "account_unavailable" });
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error("Login error:", error.message);
+    return res.status(500).json({ ok: false, error: "login_failed" });
+  }
+}
+
+async function loginWithGoogle(req, res) {
+  let googleIdentity;
+  try {
+    googleIdentity = await verifyGoogleIdToken(req.body && req.body.idToken);
+  } catch (error) {
+    return authErrorResponse(res, error, "google_verification_failed");
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    let found = await client.query(
+      `SELECT id FROM users
+        WHERE sign_in_id = $1 AND deleted_at IS NULL
+        LIMIT 1`,
+      [googleIdentity.sub]
+    );
+    let userId;
+    if (found.rowCount === 1) {
+      userId = found.rows[0].id;
+    } else {
+      const byEmail = await client.query(
+        `SELECT id, sign_in_id, password_hash
+           FROM users
+          WHERE LOWER(email) = $1 AND deleted_at IS NULL
+          LIMIT 1
+          FOR UPDATE`,
+        [googleIdentity.email]
+      );
+      if (byEmail.rowCount === 1) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          ok: false,
+          error: "account_link_required",
+          message: "An account already exists for this email. Sign in with that account, then link Google from account settings.",
+        });
+      }
+      const inserted = await client.query(
+        `INSERT INTO users (
+           id, name, email, sign_in_method, sign_in_id,
+           role, account_status, subscription_status,
+           subscription_data, email_verified, profile_image
+         ) VALUES ($1, $2, $3, 'google', $4, 'user', 'active', 'free',
+                   '{"plan":"free"}'::jsonb, TRUE, $5)
+         RETURNING id`,
+        [createPublicId("USR"), googleIdentity.name, googleIdentity.email, googleIdentity.sub, googleIdentity.picture]
+      );
+      userId = inserted.rows[0].id;
+    }
+    const tokens = await createStoredSession(client, userId);
+    const updated = await client.query(
+      `UPDATE users SET last_login_at = NOW(), updated_at = NOW()
+        WHERE id = $1 AND account_status = 'active' AND deleted_at IS NULL
+        RETURNING id, name, email, phone_number, sign_in_method, role,
+                  account_status, subscription_status, subscription_start,
+                  subscription_end, auto_renew, subscription_data,
+                  email_verified, phone_verified, country, profile_image,
+                  created_at, last_login_at`,
+      [userId]
+    );
+    if (updated.rowCount !== 1) throw new Error("account_unavailable");
+    await client.query("COMMIT");
+    return res.json({
+      ok: true,
+      ...tokens,
+      tokenType: "Bearer",
+      expiresIn: AUTH_ACCESS_TTL_SECONDS,
+      user: publicUser(updated.rows[0]),
+      isNewUser: found.rowCount === 0,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (error.code === "23505") {
+      return res.status(409).json({ ok: false, error: "account_conflict" });
+    }
+    if (error.message === "account_unavailable") {
+      return res.status(403).json({ ok: false, error: "account_unavailable" });
+    }
+    console.error("Google sign-in error:", error.message);
+    return res.status(500).json({ ok: false, error: "google_sign_in_failed" });
+  } finally {
+    client.release();
+  }
+}
+
+app.post("/api/auth/register", authConfigured, signupRateLimit, registerWithEmail);
+app.post("/api/auth/signup", authConfigured, signupRateLimit, registerWithEmail);
+app.post("/api/auth/login", authConfigured, loginRateLimit, loginWithEmail);
+app.post("/api/auth/google", authConfigured, googleRateLimit, loginWithGoogle);
+
+app.post("/api/auth/google/link", requireAuth, googleRateLimit, async (req, res) => {
+  let identity;
+  try {
+    identity = await verifyGoogleIdToken(req.body && req.body.idToken);
+  } catch (error) {
+    return authErrorResponse(res, error, "google_verification_failed");
+  }
+  if (identity.email !== req.auth.user.email) {
+    return res.status(409).json({ ok: false, error: "google_email_mismatch" });
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE users
+          SET sign_in_id = $2,
+              sign_in_method = CASE
+                WHEN password_hash IS NULL THEN 'google'
+                ELSE 'password+google'
+              END,
+              email_verified = TRUE,
+              profile_image = COALESCE(profile_image, $3),
+              updated_at = NOW()
+        WHERE id = $1 AND deleted_at IS NULL
+          AND (sign_in_id IS NULL OR sign_in_id = $2)
+        RETURNING id, sign_in_method`,
+      [req.auth.user.id, identity.sub, identity.picture]
+    );
+    if (result.rowCount !== 1) {
+      return res.status(409).json({ ok: false, error: "google_account_already_linked" });
+    }
+    return res.json({ ok: true, message: "Google account linked successfully." });
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ ok: false, error: "google_account_already_linked" });
+    }
+    console.error("Google account linking error:", error.message);
+    return res.status(500).json({ ok: false, error: "google_link_failed" });
+  }
+});
+
+app.post("/api/auth/refresh", authConfigured, loginRateLimit, async (req, res) => {
+  const refreshToken = req.body && req.body.refreshToken;
+  let claims;
+  try {
+    claims = verifyJwt(refreshToken, AUTH_REFRESH_SECRET, "refresh");
+  } catch (_) {
+    return res.status(401).json({ ok: false, error: "invalid_or_expired_refresh_token" });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `SELECT id, token_version, account_status, refresh_sessions
+         FROM users
+        WHERE id = $1 AND deleted_at IS NULL
+        FOR UPDATE`,
+      [claims.sub]
+    );
+    if (result.rowCount !== 1 || result.rows[0].account_status !== "active" ||
+        Number(result.rows[0].token_version) !== Number(claims.ver)) {
+      await client.query("ROLLBACK");
+      return res.status(401).json({ ok: false, error: "invalid_or_expired_refresh_token" });
+    }
+    const user = result.rows[0];
+    const sessions = safeJsonArray(user.refresh_sessions);
+    const current = sessions.find(session => session.sid === claims.sid);
+    if (!current || Date.parse(current.expiresAt) <= Date.now() ||
+        !timingSafeStringEqual(current.tokenHash, sha256Hex(refreshToken))) {
+      await client.query("ROLLBACK");
+      return res.status(401).json({ ok: false, error: "invalid_or_expired_refresh_token" });
+    }
+    const tokens = createTokenPair(user, claims.sid);
+    const nextSessions = sessions.map(session => session.sid === claims.sid
+      ? { ...session, tokenHash: sha256Hex(tokens.refreshToken), expiresAt: new Date(Date.now() + AUTH_REFRESH_TTL_SECONDS * 1000).toISOString() }
+      : session
+    );
+    await client.query(
+      `UPDATE users SET refresh_sessions = $2::jsonb, updated_at = NOW() WHERE id = $1`,
+      [user.id, JSON.stringify(nextSessions)]
+    );
+    await client.query("COMMIT");
+    return res.json({
+      ok: true,
+      ...tokens,
+      tokenType: "Bearer",
+      expiresIn: AUTH_ACCESS_TTL_SECONDS,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Token refresh error:", error.message);
+    return res.status(500).json({ ok: false, error: "token_refresh_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/auth/logout", requireAuth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `SELECT refresh_sessions FROM users WHERE id = $1 FOR UPDATE`,
+      [req.auth.user.id]
+    );
+    if (result.rowCount === 1) {
+      const sessions = safeJsonArray(result.rows[0].refresh_sessions);
+      const remaining = req.body && req.body.allDevices === true
+        ? []
+        : sessions.filter(session => session.sid !== req.auth.claims.sid);
+      await client.query(
+        `UPDATE users
+            SET refresh_sessions = $2::jsonb,
+                token_version = CASE WHEN $3 THEN token_version + 1 ELSE token_version END,
+                updated_at = NOW()
+          WHERE id = $1`,
+        [req.auth.user.id, JSON.stringify(remaining), req.body && req.body.allDevices === true]
+      );
+    }
+    await client.query("COMMIT");
+    return res.json({ ok: true, message: "Signed out successfully." });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("Logout error:", error.message);
+    return res.status(500).json({ ok: false, error: "logout_failed" });
+  } finally {
+    client.release();
+  }
+});
+
+app.get("/api/auth/me", requireAuth, (req, res) => {
+  return res.json({ ok: true, user: publicUser(req.auth.user) });
+});
+
+app.get("/api/subscription", requireAuth, (req, res) => {
+  return res.json({ ok: true, subscription: publicSubscription(req.auth.user) });
+});
+
+// These operations deliberately do not claim success until an email delivery
+// provider and verification/reset token delivery flow are configured.
+app.post("/api/auth/forgot-password", authConfigured, loginRateLimit, (req, res) => {
+  return res.status(503).json({
+    ok: false,
+    error: "password_reset_delivery_not_configured",
+    message: "Password reset is unavailable until a verified email delivery provider is configured.",
+  });
+});
+app.post("/api/auth/password-reset/request", authConfigured, loginRateLimit, (req, res) => {
+  return res.status(503).json({
+    ok: false,
+    error: "password_reset_delivery_not_configured",
+    message: "Password reset is unavailable until a verified email delivery provider is configured.",
+  });
+});
+
+
+/* ============================================================
    404
    ============================================================ */
 
@@ -6196,7 +6191,6 @@ app.use(
 
 async function start() {
   try {
-    validateAuthConfiguration();
     await initializeDatabase();
 
     server.listen(
