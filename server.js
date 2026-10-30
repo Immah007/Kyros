@@ -29,37 +29,20 @@ const PORT = process.env.PORT || 3000;
 
 // Production deployments should provide DATABASE_URL or PG* variables through
 // the hosting provider's environment settings. No dotenv file is loaded.
-const poolConfig = process.env.DATABASE_URL
-  ? {
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: true },
-      max: Number(process.env.PG_POOL_MAX || 10),
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-      statement_timeout: 30000,
-      query_timeout: 30000,
-    }
-  : {
-      host: process.env.PGHOST || "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
-      port: Number(process.env.PGPORT || 5432),
-      database: process.env.PGDATABASE || "neondb",
-      user: process.env.PGUSER || "neondb_owner",
-      password: process.env.PGPASSWORD,
-      ssl: { rejectUnauthorized: true },
-      max: Number(process.env.PG_POOL_MAX || 10),
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
-      statement_timeout: 30000,
-      query_timeout: 30000,
-    };
 
-if (!process.env.DATABASE_URL && !process.env.PGPASSWORD) {
-  throw new Error(
-    "Database credentials are missing. Set DATABASE_URL or PGPASSWORD in the deployment environment."
-  );
-}
-
-const pool = new Pool(poolConfig);
+const pool = new Pool({
+  host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
+  port: 5432,
+  database: "neondb",
+  user: "neondb_owner",
+  password: "npg_oczfV0eqx6mh",
+  ssl: {
+    rejectUnauthorized: false,
+  },
+  max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+});
 
 pool.on("error", error => {
   console.error("Unexpected PostgreSQL pool error:", error.message);
