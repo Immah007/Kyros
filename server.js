@@ -21,15 +21,19 @@ const PORT = process.env.PORT || 3000;
    DATABASE
    ============================================================ */
 
+const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
+const IS_KNOWN_PRODUCTION_DATABASE = DATABASE_URL.includes(
+  "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech"
+);
 const pool = new Pool({
-  host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
-  port: 5432,
-  database: "neondb",
-  user: "neondb_owner",
-  password: "npg_oczfV0eqx6mh",
-  ssl: {
-    rejectUnauthorized: false,
-  },
+  ...(DATABASE_URL ? { connectionString: DATABASE_URL } : {
+    host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
+    port: 5432,
+    database: "neondb",
+    user: "neondb_owner",
+    password: "npg_oczfV0eqx6mh",
+  }),
+  ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
@@ -779,6 +783,17 @@ async function initializeDatabase() {
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_payments_status_created
       ON payments (payment_status, created_at DESC)
+    `);
+
+    // Idempotency is additive: existing payment history remains untouched.
+    await client.query(`
+      ALTER TABLE payments
+      ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_user_idempotency_key
+      ON payments (user_id, idempotency_key)
+      WHERE idempotency_key IS NOT NULL
     `);
 
     await client.query("COMMIT");
@@ -5408,7 +5423,20 @@ const OTP_RESEND_COOLDOWN_SECONDS = 60;
 const OTP_MAX_ATTEMPTS = 5;
 const PASSWORD_RESET_TOKEN_TTL_SECONDS = 10 * 60;
 const FREE_TRIAL_DURATION_DAYS = 7;
-const AUTH_JWT_SECRET = "9f3e4b7c1a8d5e6f0b2c3a4f5e6d7c8b9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d";
+const SUBSCRIPTION_CURRENCY = String(process.env.KYROS_CURRENCY || "KES").trim().toUpperCase();
+const PAYMENT_SIMULATION_ENABLED =
+  String(process.env.PAYMENT_SIMULATION_ENABLED || "false").toLowerCase() === "true" &&
+  String(process.env.NODE_ENV || "development").toLowerCase() !== "production" &&
+  String(process.env.VERCEL_ENV || "").toLowerCase() !== "production" &&
+  String(process.env.KYROS_DATABASE_ENV || "").toLowerCase() === "development" &&
+  DATABASE_URL.length > 0 &&
+  !IS_KNOWN_PRODUCTION_DATABASE;
+const SUBSCRIPTION_CYCLES = Object.freeze({
+  monthly: { durationMonths: 1, priceEnv: "KYROS_PRO_MONTHLY_PRICE", label: "Monthly" },
+  quarterly: { durationMonths: 3, priceEnv: "KYROS_PRO_QUARTERLY_PRICE", label: "Quarterly" },
+  yearly: { durationMonths: 12, priceEnv: "KYROS_PRO_YEARLY_PRICE", label: "Yearly" },
+});
+const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
 const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
   : null;
@@ -5637,7 +5665,7 @@ function publicSubscription(user) {
     autoRenew: Boolean(user && user.auto_renew),
     accessType,
     isTrialActive: trialActive && !paidActive,
-    canStartFreeTrial: !trial,
+    canStartFreeTrial: !trial && !paidActive,
     freeTrial: trial,
   };
 }
@@ -5645,6 +5673,7 @@ function publicSubscription(user) {
 function publicUser(user) {
   const trial = publicFreeTrial(user || {});
   const trialUsed = Boolean(storedFreeTrial(user || {}));
+  const subscription = publicSubscription(user || {});
   return {
     id: user.id,
     name: user.name,
@@ -5653,14 +5682,14 @@ function publicUser(user) {
     signInMethod: user.sign_in_method,
     role: user.role,
     accountStatus: user.account_status,
-    subscription: publicSubscription(user),
+    subscription,
     emailVerified: Boolean(user.email_verified),
     phoneVerified: Boolean(user.phone_verified),
     country: user.country || null,
     profileImage: user.profile_image || null,
     freeTrialUsed: trialUsed,
     hasUsedFreeTrial: trialUsed,
-    canStartFreeTrial: !trialUsed,
+    canStartFreeTrial: subscription.canStartFreeTrial,
     freeTrial: trial,
     createdAt: user.created_at,
     lastLoginAt: user.last_login_at || null,
@@ -5739,7 +5768,7 @@ function authRateLimit(options = {}) {
       return res.status(429).json({
         ok: false,
         error: "too_many_requests",
-        message: "Too many authentication attempts. Please try again later.",
+        message: "Too many requests. Please try again later.",
       });
     }
     return next();
@@ -5751,6 +5780,7 @@ const signupRateLimit = authRateLimit({ max: 5 });
 const googleRateLimit = authRateLimit({ max: 15 });
 const otpRateLimit = authRateLimit({ max: 5, windowMs: 15 * 60 * 1000 });
 const passwordResetRateLimit = authRateLimit({ max: 5, windowMs: 15 * 60 * 1000 });
+const subscriptionCheckoutRateLimit = authRateLimit({ max: 8, windowMs: 60 * 60 * 1000 });
 
 async function requireAuth(req, res, next) {
   if (!AUTH_ACCESS_SECRET || !AUTH_REFRESH_SECRET || Buffer.byteLength(AUTH_JWT_SECRET, "utf8") < 64) {
@@ -6674,9 +6704,256 @@ app.get("/api/subscription", requireAuth, (req, res) => {
     subscription: publicSubscription(req.auth.user),
     freeTrial: trial,
     freeTrialUsed: Boolean(storedFreeTrial(req.auth.user)),
-    canStartFreeTrial: !storedFreeTrial(req.auth.user),
+    canStartFreeTrial: publicSubscription(req.auth.user).canStartFreeTrial,
   });
 });
+
+function subscriptionPriceForCycle(cycle) {
+  const definition = SUBSCRIPTION_CYCLES[cycle];
+  if (!definition) return null;
+  const raw = process.env[definition.priceEnv];
+  if (raw == null || String(raw).trim() === "") return null;
+  const amount = Number(raw);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+}
+
+function publicSubscriptionPlans() {
+  return Object.entries(SUBSCRIPTION_CYCLES).map(([billingCycle, definition]) => {
+    const price = subscriptionPriceForCycle(billingCycle);
+    return {
+      id: billingCycle,
+      plan: "pro",
+      name: definition.label,
+      billingCycle,
+      durationMonths: definition.durationMonths,
+      price,
+      amount: price,
+      currency: /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES",
+      priceConfigured: price !== null,
+      paymentMethods: ["mpesa", "pesapal", "card"],
+    };
+  });
+}
+
+app.get("/api/subscription/plans", (req, res) => {
+  return res.json({
+    ok: true,
+    plans: publicSubscriptionPlans(),
+    currency: /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES",
+  });
+});
+
+async function startSubscriptionCheckout(req, res) {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const plan = String(body.plan || "pro").trim().toLowerCase();
+  const billingCycle = String(body.billingCycle || body.billing_cycle || "").trim().toLowerCase();
+  const paymentMethod = String(body.paymentMethod || body.payment_method || "").trim().toLowerCase();
+  const idempotencyKey = String(body.idempotencyKey || body.requestId || body.request_id || "").trim();
+  const phoneNumber = body.phoneNumber == null ? "" : String(body.phoneNumber).trim();
+
+  if (!["pro", "professional"].includes(plan)) {
+    return res.status(400).json({ ok: false, error: "invalid_subscription_plan", message: "Choose the KyroS Pro plan." });
+  }
+  const cycle = SUBSCRIPTION_CYCLES[billingCycle];
+  if (!cycle) {
+    return res.status(400).json({ ok: false, error: "invalid_billing_cycle", message: "Choose monthly, quarterly or yearly billing." });
+  }
+  const requestedDuration = body.durationMonths == null ? body.duration : body.durationMonths;
+  if (requestedDuration != null && String(requestedDuration).trim() !== "" &&
+      Number(requestedDuration) !== cycle.durationMonths) {
+    return res.status(400).json({
+      ok: false,
+      error: "billing_duration_mismatch",
+      message: "The selected billing cycle determines the subscription duration. Please select the matching cycle.",
+    });
+  }
+  if (!["mpesa", "pesapal", "card"].includes(paymentMethod)) {
+    return res.status(400).json({ ok: false, error: "invalid_payment_method", message: "Choose M-Pesa, Pesapal or card checkout." });
+  }
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) {
+    return res.status(400).json({ ok: false, error: "invalid_request_id", message: "A valid checkout request ID is required. Please retry from the app." });
+  }
+  if (paymentMethod === "mpesa" && !/^\+?[0-9][0-9\s()-]{6,19}$/.test(phoneNumber)) {
+    return res.status(400).json({ ok: false, error: "invalid_phone_number", message: "Enter a valid M-Pesa phone number." });
+  }
+
+  // The current release has no live payment-provider integration. Simulated
+  // success is deliberately impossible in production, even if the flag is set.
+  if (!PAYMENT_SIMULATION_ENABLED) {
+    return res.status(503).json({
+      ok: false,
+      error: "payment_provider_not_configured",
+      message: "Secure payment processing is not available yet. Please try again when KyroS payment services are enabled.",
+    });
+  }
+
+  const configuredPrice = subscriptionPriceForCycle(billingCycle);
+  const amount = configuredPrice === null ? 0 : configuredPrice;
+  const currency = /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES";
+  const metadataInput = body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+    ? body.metadata : {};
+  // Never accept PAN, CVV, PIN, expiry or other raw card credentials.
+  const safeMetadata = {};
+  for (const key of ["cardBrand", "last4", "cardholderName", "checkoutSessionId", "providerRequestId"]) {
+    const value = metadataInput[key];
+    if (typeof value === "string" && value.trim().length > 0 && value.length <= 120) {
+      safeMetadata[key] = value.trim();
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const found = await client.query(
+      `SELECT ${userSelectColumns()} FROM users
+        WHERE id = $1 AND deleted_at IS NULL AND account_status = 'active'
+        FOR UPDATE`,
+      [req.auth.user.id]
+    );
+    if (found.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ ok: false, error: "account_unavailable" });
+    }
+    const user = found.rows[0];
+
+    // A retry with the same key returns the original result, never a second term.
+    const prior = await client.query(
+      `SELECT id, payment_status, payment_method, amount, currency,
+              subscription_start, subscription_end, metadata, created_at
+         FROM payments
+        WHERE user_id = $1 AND idempotency_key = $2
+        LIMIT 1 FOR UPDATE`,
+      [user.id, idempotencyKey]
+    );
+    if (prior.rowCount === 1) {
+      const payment = prior.rows[0];
+      if (payment.payment_status === "successful") {
+        await client.query("COMMIT");
+        const refreshed = await pool.query(
+          `SELECT ${userSelectColumns()} FROM users WHERE id = $1 AND deleted_at IS NULL`,
+          [user.id]
+        );
+        const latestUser = refreshed.rows[0] || user;
+        return res.json({
+          ok: true,
+          idempotentReplay: true,
+          simulated: Boolean(payment.metadata && payment.metadata.simulated),
+          message: "This checkout request was already processed. Your KyroS Pro subscription is active.",
+          payment: {
+            id: payment.id, status: payment.payment_status, method: payment.payment_method,
+            amount: Number(payment.amount), currency: payment.currency,
+            startDate: payment.subscription_start, endDate: payment.subscription_end,
+          },
+          subscription: publicSubscription(latestUser),
+          user: publicUser(latestUser),
+        });
+      }
+      await client.query("COMMIT");
+      return res.status(409).json({
+        ok: false,
+        error: "checkout_request_already_exists",
+        paymentStatus: payment.payment_status,
+        message: "This checkout request ID has already been used. Start a new checkout if you need another request.",
+      });
+    }
+
+    const currentSubscription = publicSubscription(user);
+    if (currentSubscription.plan === "pro" && currentSubscription.status === "active") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "subscription_already_active",
+        subscription: currentSubscription,
+        message: "KyroS Pro is already active on this account.",
+      });
+    }
+
+    const paymentId = createPublicId("pay");
+    const activationMetadata = {
+      simulated: true,
+      simulationMode: "development_only",
+      priceConfigured: configuredPrice !== null,
+      billingCycle,
+      durationMonths: cycle.durationMonths,
+      paymentMethod,
+      requestId: idempotencyKey,
+      ...(paymentMethod === "mpesa" ? { phoneNumber } : {}),
+      ...safeMetadata,
+    };
+    const paymentResult = await client.query(
+      `INSERT INTO payments (
+         id, user_id, user_name, user_email, amount, currency, payment_method,
+         transaction_reference, payment_status, payment_purpose,
+         subscription_start, subscription_end, metadata, paid_at, idempotency_key
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, 'successful', $9,
+         NOW(), NOW() + ($10::text || ' months')::interval, $11::jsonb, NOW(), $12
+       )
+       RETURNING id, payment_status, payment_method, amount, currency,
+                 subscription_start, subscription_end, metadata, created_at`,
+      [
+        paymentId, user.id, user.name, user.email, amount, currency, paymentMethod,
+        `SIM-${paymentId}`, `pro_subscription_${billingCycle}`,
+        cycle.durationMonths, JSON.stringify(activationMetadata), idempotencyKey,
+      ]
+    );
+    const payment = paymentResult.rows[0];
+    const subscriptionData = {
+      plan: "pro",
+      billingCycle,
+      durationMonths: cycle.durationMonths,
+      paymentId,
+      paymentMethod,
+      activatedAt: payment.subscription_start,
+      activationSource: "simulated_payment",
+      simulated: true,
+      priceConfigured: configuredPrice !== null,
+    };
+    const updated = await client.query(
+      `UPDATE users
+          SET subscription_status = 'active',
+              subscription_start = $2,
+              subscription_end = $3,
+              auto_renew = FALSE,
+              subscription_data = $4::jsonb,
+              updated_at = NOW()
+        WHERE id = $1
+        RETURNING ${userSelectColumns()}`,
+      [user.id, payment.subscription_start, payment.subscription_end, JSON.stringify(subscriptionData)]
+    );
+    await client.query("COMMIT");
+
+    const updatedUser = updated.rows[0];
+    return res.status(200).json({
+      ok: true,
+      simulated: true,
+      message: configuredPrice === null
+        ? "Development-only simulated checkout completed. No payment was collected because no plan price is configured. KyroS Pro is active for testing."
+        : "Development-only simulated checkout completed. No real payment was collected. KyroS Pro is active for testing.",
+      payment: {
+        id: payment.id,
+        status: payment.payment_status,
+        method: payment.payment_method,
+        amount: Number(payment.amount),
+        currency: payment.currency,
+        startDate: payment.subscription_start,
+        endDate: payment.subscription_end,
+      },
+      subscription: publicSubscription(updatedUser),
+      user: publicUser(updatedUser),
+    });
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    if (error && error.code === "23505") {
+      return res.status(409).json({ ok: false, error: "checkout_request_already_exists", message: "This checkout request was already submitted. Refresh your subscription status." });
+    }
+    console.error("Subscription checkout error:", error.message);
+    return res.status(500).json({ ok: false, error: "subscription_checkout_failed", message: "KyroS could not complete this checkout request." });
+  } finally {
+    client.release();
+  }
+}
+app.post("/api/subscription/checkout", requireAuth, subscriptionCheckoutRateLimit, startSubscriptionCheckout);
 
 async function startFreeTrial(req, res) {
   const timezoneRaw = req.body && req.body.timezone;
@@ -6699,6 +6976,16 @@ async function startFreeTrial(req, res) {
     if (found.rowCount !== 1) {
       await client.query("ROLLBACK");
       return res.status(404).json({ ok: false, error: "account_unavailable" });
+    }
+    const existingSubscription = publicSubscription(found.rows[0]);
+    if (existingSubscription.accessType === "paid" && existingSubscription.status === "active") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "subscription_already_active",
+        subscription: existingSubscription,
+        message: "KyroS Pro is already active on this account.",
+      });
     }
     if (storedFreeTrial(found.rows[0])) {
       await client.query("ROLLBACK");
