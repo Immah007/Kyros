@@ -5408,7 +5408,7 @@ const OTP_RESEND_COOLDOWN_SECONDS = 60;
 const OTP_MAX_ATTEMPTS = 5;
 const PASSWORD_RESET_TOKEN_TTL_SECONDS = 10 * 60;
 const FREE_TRIAL_DURATION_DAYS = 7;
-const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
+const AUTH_JWT_SECRET = "9f3e4b7c1a8d5e6f0b2c3a4f5e6d7c8b9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d";
 const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
   : null;
