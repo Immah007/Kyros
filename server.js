@@ -5450,7 +5450,7 @@ const SUBSCRIPTION_CYCLES = Object.freeze({
     billingDescription: "Billed yearly",
   }),
 });
-const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
+const AUTH_JWT_SECRET = "9f3e4b7c1a8d5e6f0b2c3a4f5e6d7c8b9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d";// String(process.env.AUTH_JWT_SECRET || "");
 const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
   : null;
