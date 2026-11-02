@@ -31,7 +31,13 @@ const IS_KNOWN_PRODUCTION_DATABASE = DATABASE_URL.includes(
   "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech"
 );
 const pool = new Pool({
-  connectionString: DATABASE_URL,
+  ...(DATABASE_URL ? { connectionString: DATABASE_URL } : {
+    host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
+    port: 5432,
+    database: "neondb",
+    user: "neondb_owner",
+    password: "npg_oczfV0eqx6mh",
+  }),
   ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30000,
@@ -5523,7 +5529,7 @@ async function currentUsdExchangeRate(currency) {
     clearTimeout(timeout);
   }
 }
-const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
+const AUTH_JWT_SECRET = '9f3e4b7c1a8d5e6f0b2c3a4f5e6d7c8b9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d';// String(process.env.AUTH_JWT_SECRET || "");
 const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
   : null;
