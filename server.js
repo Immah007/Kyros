@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3000;
    DATABASE
    ============================================================ */
 
-const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
+const DATABASE_URL = 'ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech';// String(process.env.DATABASE_URL || "").trim();
 if (!DATABASE_URL) {
    console.log("set db in dotenv");
  // throw new Error("DATABASE_URL is required. Configure it in the backend environment; database credentials are never embedded in source code.");
