@@ -16,23 +16,22 @@ app.disable("x-powered-by");
 app.use(express.json({ limit: "128kb" }));
 
 const PORT = process.env.PORT || 3000;
+// Backend contract: matches KyroS Mobile's /api/auth/* and /api/subscription/* calls.
+// Node.js 18+ is required for the built-in fetch API used by live FX quotes.
 
 /* ============================================================
    DATABASE
    ============================================================ */
 
 const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
+if (!DATABASE_URL) {
+  throw new Error("DATABASE_URL is required. Configure it in the backend environment; database credentials are never embedded in source code.");
+}
 const IS_KNOWN_PRODUCTION_DATABASE = DATABASE_URL.includes(
   "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech"
 );
 const pool = new Pool({
-  ...(DATABASE_URL ? { connectionString: DATABASE_URL } : {
-    host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
-    port: 5432,
-    database: "neondb",
-    user: "neondb_owner",
-    password: "npg_oczfV0eqx6mh",
-  }),
+  connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false },
   max: 10,
   idleTimeoutMillis: 30000,
@@ -749,7 +748,7 @@ async function initializeDatabase() {
         user_name VARCHAR(160) NOT NULL,
         user_email VARCHAR(320) NOT NULL,
         amount NUMERIC(12, 2) NOT NULL CHECK (amount >= 0),
-        currency VARCHAR(3) NOT NULL DEFAULT 'KES'
+        currency VARCHAR(3) NOT NULL DEFAULT 'USD'
           CHECK (currency ~ '^[A-Z]{3}$'),
         payment_method VARCHAR(40) NOT NULL,
         transaction_reference VARCHAR(200),
@@ -767,6 +766,47 @@ async function initializeDatabase() {
           OR subscription_end >= subscription_start
         )
       )
+    `);
+
+    await client.query(`ALTER TABLE payments ALTER COLUMN currency SET DEFAULT 'USD'`);
+
+    // USD list prices are maintained in the database; no sale prices or FX rates
+    // are embedded in the mobile app or backend source.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS subscription_prices (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        billing_cycle VARCHAR(20) NOT NULL UNIQUE
+          CHECK (billing_cycle IN ('yearly', 'quarterly', 'monthly')),
+        base_price_usd NUMERIC(12,2) NOT NULL CHECK (base_price_usd > 0),
+        active BOOLEAN NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS subscription_price_quotes (
+        id UUID PRIMARY KEY,
+        billing_cycle VARCHAR(20) NOT NULL
+          CHECK (billing_cycle IN ('yearly', 'quarterly', 'monthly')),
+        duration_months INTEGER NOT NULL CHECK (duration_months IN (1, 3, 12)),
+        base_price_usd NUMERIC(12,2) NOT NULL CHECK (base_price_usd > 0),
+        exchange_rate NUMERIC(20,8) NOT NULL CHECK (exchange_rate > 0),
+        payment_currency VARCHAR(3) NOT NULL CHECK (payment_currency ~ '^[A-Z]{3}$'),
+        converted_amount NUMERIC(12,2) NOT NULL CHECK (converted_amount > 0),
+        expires_at TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      ALTER TABLE payments
+        ADD COLUMN IF NOT EXISTS base_price_usd NUMERIC(12,2),
+        ADD COLUMN IF NOT EXISTS exchange_rate NUMERIC(20,8),
+        ADD COLUMN IF NOT EXISTS payment_currency VARCHAR(3),
+        ADD COLUMN IF NOT EXISTS converted_amount NUMERIC(12,2),
+        ADD COLUMN IF NOT EXISTS provider_fee_amount NUMERIC(12,2),
+        ADD COLUMN IF NOT EXISTS final_charged_amount NUMERIC(12,2),
+        ADD COLUMN IF NOT EXISTS final_received_amount NUMERIC(12,2),
+        ADD COLUMN IF NOT EXISTS price_quote_id UUID
     `);
 
     await client.query(`
@@ -5423,7 +5463,7 @@ const OTP_RESEND_COOLDOWN_SECONDS = 60;
 const OTP_MAX_ATTEMPTS = 5;
 const PASSWORD_RESET_TOKEN_TTL_SECONDS = 10 * 60;
 const FREE_TRIAL_DURATION_DAYS = 7;
-const SUBSCRIPTION_CURRENCY = String(process.env.KYROS_CURRENCY || "KES").trim().toUpperCase();
+const SUBSCRIPTION_CURRENCY = "USD"; // KyroS Pro public pricing is denominated in USD.
 const PAYMENT_SIMULATION_ENABLED =
   String(process.env.PAYMENT_SIMULATION_ENABLED || "false").toLowerCase() === "true" &&
   String(process.env.NODE_ENV || "development").toLowerCase() !== "production" &&
@@ -5432,11 +5472,58 @@ const PAYMENT_SIMULATION_ENABLED =
   DATABASE_URL.length > 0 &&
   !IS_KNOWN_PRODUCTION_DATABASE;
 const SUBSCRIPTION_CYCLES = Object.freeze({
-  monthly: { durationMonths: 1, priceEnv: "KYROS_PRO_MONTHLY_PRICE", label: "Monthly" },
-  quarterly: { durationMonths: 3, priceEnv: "KYROS_PRO_QUARTERLY_PRICE", label: "Quarterly" },
-  yearly: { durationMonths: 12, priceEnv: "KYROS_PRO_YEARLY_PRICE", label: "Yearly" },
+  monthly: Object.freeze({
+    durationMonths: 1, label: "Monthly", badge: "FLEXIBLE",
+    billingDescription: "Billed monthly",
+  }),
+  quarterly: Object.freeze({
+    durationMonths: 3, label: "Quarterly", badge: "MOST POPULAR",
+    billingDescription: "Billed every 3 months",
+  }),
+  yearly: Object.freeze({
+    durationMonths: 12, label: "Yearly", badge: "BEST VALUE",
+    billingDescription: "Billed yearly",
+  }),
 });
-const AUTH_JWT_SECRET = "9f3e4b7c1a8d5e6f0b2c3a4f5e6d7c8b9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d"; //  String(process.env.AUTH_JWT_SECRET || "");
+const PAYMENT_CURRENCY = String(process.env.PAYMENT_CURRENCY || "USD").trim().toUpperCase();
+if (!/^[A-Z]{3}$/.test(PAYMENT_CURRENCY)) {
+  throw new Error("PAYMENT_CURRENCY must be a valid three-letter ISO currency code.");
+}
+const FX_RATE_API_URL = String(
+  process.env.FX_RATE_API_URL || "https://open.er-api.com/v6/latest/USD"
+).trim();
+const FX_RATE_MAX_AGE_SECONDS = Number(process.env.FX_RATE_MAX_AGE_SECONDS || 86400);
+let fxCache = { currency: null, rate: null, fetchedAt: 0, providerUpdatedAt: null };
+
+async function currentUsdExchangeRate(currency) {
+  const code = String(currency || PAYMENT_CURRENCY).trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(code)) throw new Error("Invalid payment currency.");
+  if (code === "USD") {
+    return { rate: 1, provider: "USD base currency", providerUpdatedAt: new Date().toISOString() };
+  }
+  if (fxCache.currency === code && fxCache.rate > 0 && Date.now() - fxCache.fetchedAt < 5 * 60 * 1000) {
+    return { rate: fxCache.rate, provider: FX_RATE_API_URL, providerUpdatedAt: fxCache.providerUpdatedAt };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6000);
+  try {
+    const response = await fetch(FX_RATE_API_URL, { signal: controller.signal, headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(`FX provider returned HTTP ${response.status}.`);
+    const payload = await response.json();
+    const rate = Number(payload && payload.rates && payload.rates[code]);
+    const updatedUnix = Number(payload && (payload.time_last_update_unix || payload.time_last_update_utc && Date.parse(payload.time_last_update_utc) / 1000));
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error(`No current USD/${code} exchange rate is available.`);
+    if (!Number.isFinite(updatedUnix) || Date.now() / 1000 - updatedUnix > FX_RATE_MAX_AGE_SECONDS) {
+      throw new Error("The exchange-rate provider returned stale data; checkout pricing is unavailable.");
+    }
+    const updatedAt = new Date(updatedUnix * 1000).toISOString();
+    fxCache = { currency: code, rate, fetchedAt: Date.now(), providerUpdatedAt: updatedAt };
+    return { rate, provider: FX_RATE_API_URL, providerUpdatedAt: updatedAt };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+const AUTH_JWT_SECRET = String(process.env.AUTH_JWT_SECRET || "");
 const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
   : null;
@@ -5445,9 +5532,9 @@ const AUTH_REFRESH_SECRET = AUTH_JWT_SECRET
   : null;
 const GOOGLE_CLIENT_IDS = new Set(
   String([
-    process.env.GOOGLE_CLIENT_IDS || "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com,341608273026-t9fv1o4jfq60q5mcqgantbuj66390kfr.apps.googleusercontent.com",
-    process.env.GOOGLE_WEB_CLIENT_ID || "341608273026-t9fv1o4jfq60q5mcqgantbuj66390kfr.apps.googleusercontent.com",
-    process.env.GOOGLE_ANDROID_CLIENT_ID || "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com",
+    process.env.GOOGLE_CLIENT_IDS || "",
+    process.env.GOOGLE_WEB_CLIENT_ID || "",
+    process.env.GOOGLE_ANDROID_CLIENT_ID || "",
   ].join(","))
     .split(",")
     .map(value => value.trim())
@@ -5662,6 +5749,12 @@ function publicSubscription(user) {
     status,
     startDate,
     endDate,
+    billingCycle: paidActive
+      ? String((parseJsonObject(user && user.subscription_data) || {}).billingCycle || (parseJsonObject(user && user.subscription_data) || {}).billing_cycle || "").toLowerCase() || null
+      : null,
+    currency: String((parseJsonObject(user && user.subscription_data) || {}).currency || "USD").toUpperCase(),
+    price: Number.isFinite(Number((parseJsonObject(user && user.subscription_data) || {}).price))
+      ? Number((parseJsonObject(user && user.subscription_data) || {}).price) : null,
     autoRenew: Boolean(user && user.auto_renew),
     accessType,
     isTrialActive: trialActive && !paidActive,
@@ -6708,39 +6801,105 @@ app.get("/api/subscription", requireAuth, (req, res) => {
   });
 });
 
-function subscriptionPriceForCycle(cycle) {
-  const definition = SUBSCRIPTION_CYCLES[cycle];
-  if (!definition) return null;
-  const raw = process.env[definition.priceEnv];
-  if (raw == null || String(raw).trim() === "") return null;
-  const amount = Number(raw);
-  return Number.isFinite(amount) && amount >= 0 ? amount : null;
-}
+async function publicSubscriptionPlans(currency = PAYMENT_CURRENCY) {
+  const code = String(currency || PAYMENT_CURRENCY).trim().toUpperCase();
+  const cycles = ["yearly", "quarterly", "monthly"];
+  const priceResult = await pool.query(
+    `SELECT billing_cycle, base_price_usd
+       FROM subscription_prices
+      WHERE active = TRUE AND billing_cycle = ANY($1::varchar[])`,
+    [cycles]
+  );
+  const configured = new Map(priceResult.rows.map(row => [row.billing_cycle, Number(row.base_price_usd)]));
+  let fx = null;
+  let fxError = null;
+  if (code === "USD") fx = { rate: 1, provider: "USD base currency", providerUpdatedAt: new Date().toISOString() };
+  else {
+    try { fx = await currentUsdExchangeRate(code); }
+    catch (error) { fxError = error.message || "Current currency conversion is unavailable."; }
+  }
 
-function publicSubscriptionPlans() {
-  return Object.entries(SUBSCRIPTION_CYCLES).map(([billingCycle, definition]) => {
-    const price = subscriptionPriceForCycle(billingCycle);
-    return {
+  const plans = [];
+  for (const billingCycle of cycles) {
+    const definition = SUBSCRIPTION_CYCLES[billingCycle];
+    const basePriceUsd = configured.get(billingCycle);
+    const hasPrice = Number.isFinite(basePriceUsd) && basePriceUsd > 0 && Boolean(fx && fx.rate > 0);
+    let quote = null;
+    let convertedAmount = null;
+    let monthlyEquivalent = null;
+    if (hasPrice) {
+      convertedAmount = Math.round(basePriceUsd * fx.rate * 100) / 100;
+      monthlyEquivalent = Math.round((convertedAmount / definition.durationMonths) * 100) / 100;
+      if (convertedAmount > 0 && monthlyEquivalent > 0) {
+        const quoteId = crypto.randomUUID();
+        await pool.query(
+          `INSERT INTO subscription_price_quotes
+             (id, billing_cycle, duration_months, base_price_usd, exchange_rate,
+              payment_currency, converted_amount, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + INTERVAL '15 minutes')`,
+          [quoteId, billingCycle, definition.durationMonths, basePriceUsd, fx.rate, code, convertedAmount]
+        );
+        quote = quoteId;
+      }
+    }
+    plans.push({
       id: billingCycle,
       plan: "pro",
       name: definition.label,
       billingCycle,
       durationMonths: definition.durationMonths,
-      price,
-      amount: price,
-      currency: /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES",
-      priceConfigured: price !== null,
-      paymentMethods: ["mpesa", "pesapal", "card"],
-    };
-  });
+      basePriceUsd: hasPrice ? basePriceUsd : null,
+      baseUsdPrice: hasPrice ? basePriceUsd : null,
+      exchangeRate: hasPrice ? fx.rate : null,
+      paymentCurrency: code,
+      currency: code,
+      convertedAmount,
+      amount: convertedAmount,
+      price: convertedAmount,
+      monthlyEquivalent,
+      monthlyPrice: monthlyEquivalent,
+      priceQuoteId: quote,
+      priceConfigured: Boolean(quote),
+      priceUnavailableReason: !configured.has(billingCycle)
+        ? "The USD base price has not been configured by the KyroS administrator."
+        : fxError,
+      exchangeRateProvider: fx ? fx.provider : null,
+      exchangeRateUpdatedAt: fx ? fx.providerUpdatedAt : null,
+      providerFeeAmount: null,
+      finalChargedAmount: null,
+      finalReceivedAmount: null,
+      badge: definition.badge,
+      billingDescription: definition.billingDescription,
+      paymentMethods: [
+        { id: "mpesa", name: "M-Pesa", status: "provider_integration_pending" },
+        { id: "airtel", name: "Airtel Money", status: "provider_integration_pending" },
+        { id: "card", name: "Credit or debit card", status: "provider_integration_pending" },
+        { id: "google_pay", name: "Google Pay", status: "coming_soon" },
+      ],
+    });
+  }
+  return plans;
 }
 
-app.get("/api/subscription/plans", (req, res) => {
-  return res.json({
-    ok: true,
-    plans: publicSubscriptionPlans(),
-    currency: /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES",
-  });
+app.get("/api/subscription/plans", async (req, res) => {
+  try {
+    const requestedCurrency = String(req.query.currency || PAYMENT_CURRENCY).trim().toUpperCase();
+    if (!/^[A-Z]{3}$/.test(requestedCurrency)) {
+      return res.status(400).json({ ok: false, error: "invalid_currency", message: "Use a three-letter ISO currency code." });
+    }
+    const plans = await publicSubscriptionPlans(requestedCurrency);
+    return res.json({
+      ok: true,
+      plans,
+      currency: requestedCurrency,
+      baseCurrency: "USD",
+      pricingMode: "database_usd_price_with_live_fx_quote",
+      quoteValiditySeconds: 900,
+    });
+  } catch (error) {
+    console.error("Subscription plan pricing error:", error.message);
+    return res.status(503).json({ ok: false, error: "pricing_temporarily_unavailable", message: "KyroS could not retrieve current subscription pricing. Please try again shortly." });
+  }
 });
 
 async function startSubscriptionCheckout(req, res) {
@@ -6767,14 +6926,21 @@ async function startSubscriptionCheckout(req, res) {
       message: "The selected billing cycle determines the subscription duration. Please select the matching cycle.",
     });
   }
-  if (!["mpesa", "pesapal", "card"].includes(paymentMethod)) {
-    return res.status(400).json({ ok: false, error: "invalid_payment_method", message: "Choose M-Pesa, Pesapal or card checkout." });
+  if (!["mpesa", "airtel", "pesapal", "card"].includes(paymentMethod)) {
+    return res.status(400).json({ ok: false, error: "invalid_payment_method", message: "Choose M-Pesa, Airtel Money or card checkout. Google Pay is not available yet." });
   }
   if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) {
     return res.status(400).json({ ok: false, error: "invalid_request_id", message: "A valid checkout request ID is required. Please retry from the app." });
   }
-  if (paymentMethod === "mpesa" && !/^\+?[0-9][0-9\s()-]{6,19}$/.test(phoneNumber)) {
-    return res.status(400).json({ ok: false, error: "invalid_phone_number", message: "Enter a valid M-Pesa phone number." });
+  if (["mpesa", "airtel"].includes(paymentMethod) && !/^\+?[0-9][0-9\s()-]{6,19}$/.test(phoneNumber)) {
+    return res.status(400).json({ ok: false, error: "invalid_phone_number", message: `Enter a valid ${paymentMethod === "mpesa" ? "M-Pesa" : "Airtel Money"} phone number.` });
+  }
+
+  const metadataInput = body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+    ? body.metadata : {};
+  const priceQuoteId = String(metadataInput.priceQuoteId || metadataInput.quoteId || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(priceQuoteId)) {
+    return res.status(409).json({ ok: false, error: "valid_price_quote_required", message: "Refresh the plan prices before starting checkout. No estimated or missing price can be charged." });
   }
 
   // The current release has no live payment-provider integration. Simulated
@@ -6787,11 +6953,10 @@ async function startSubscriptionCheckout(req, res) {
     });
   }
 
-  const configuredPrice = subscriptionPriceForCycle(billingCycle);
-  const amount = configuredPrice === null ? 0 : configuredPrice;
-  const currency = /^[A-Z]{3}$/.test(SUBSCRIPTION_CURRENCY) ? SUBSCRIPTION_CURRENCY : "KES";
-  const metadataInput = body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
-    ? body.metadata : {};
+  let configuredPrice = null;
+  let amount = null;
+  let currency = null;
+  let priceQuote = null;
   // Never accept PAN, CVV, PIN, expiry or other raw card credentials.
   const safeMetadata = {};
   for (const key of ["cardBrand", "last4", "cardholderName", "checkoutSessionId", "providerRequestId"]) {
@@ -6804,6 +6969,27 @@ async function startSubscriptionCheckout(req, res) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const quoteResult = await client.query(
+      `SELECT id, billing_cycle, duration_months, base_price_usd, exchange_rate,
+              payment_currency, converted_amount, expires_at, consumed_at
+         FROM subscription_price_quotes
+        WHERE id = $1 AND billing_cycle = $2
+        FOR UPDATE`,
+      [priceQuoteId, billingCycle]
+    );
+    if (quoteResult.rowCount !== 1 ||
+        Date.parse(quoteResult.rows[0].expires_at) <= Date.now()) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "price_quote_expired", message: "The displayed price quote has expired. Reload the plans to obtain a current quote." });
+    }
+    priceQuote = quoteResult.rows[0];
+    configuredPrice = Number(priceQuote.base_price_usd);
+    amount = Number(priceQuote.converted_amount);
+    currency = String(priceQuote.payment_currency).toUpperCase();
+    if (!(configuredPrice > 0) || !(amount > 0) || !(Number(priceQuote.exchange_rate) > 0) || !/^[A-Z]{3}$/.test(currency)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "invalid_price_quote", message: "The stored price quote is incomplete. Reload plans before checkout." });
+    }
     const found = await client.query(
       `SELECT ${userSelectColumns()} FROM users
         WHERE id = $1 AND deleted_at IS NULL AND account_status = 'active'
@@ -6857,6 +7043,11 @@ async function startSubscriptionCheckout(req, res) {
       });
     }
 
+    if (priceQuote.consumed_at) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "price_quote_already_used", message: "This price quote has already been used. Refresh the plans to obtain a new quote." });
+    }
+
     const currentSubscription = publicSubscription(user);
     if (currentSubscription.plan === "pro" && currentSubscription.status === "active") {
       await client.query("ROLLBACK");
@@ -6875,39 +7066,64 @@ async function startSubscriptionCheckout(req, res) {
       priceConfigured: configuredPrice !== null,
       billingCycle,
       durationMonths: cycle.durationMonths,
+      basePriceUsd: configuredPrice,
+      exchangeRate: Number(priceQuote.exchange_rate),
+      paymentCurrency: currency,
+      convertedAmount: amount,
+      providerFeeAmount: null,
+      finalChargedAmount: null,
+      finalReceivedAmount: null,
+      priceQuoteId,
       paymentMethod,
       requestId: idempotencyKey,
-      ...(paymentMethod === "mpesa" ? { phoneNumber } : {}),
+      ...(["mpesa", "airtel"].includes(paymentMethod) ? { phoneNumber } : {}),
       ...safeMetadata,
     };
     const paymentResult = await client.query(
       `INSERT INTO payments (
          id, user_id, user_name, user_email, amount, currency, payment_method,
          transaction_reference, payment_status, payment_purpose,
-         subscription_start, subscription_end, metadata, paid_at, idempotency_key
+         subscription_start, subscription_end, metadata, paid_at, idempotency_key,
+         base_price_usd, exchange_rate, payment_currency, converted_amount,
+         provider_fee_amount, final_charged_amount, final_received_amount, price_quote_id
        ) VALUES (
          $1, $2, $3, $4, $5, $6, $7, $8, 'successful', $9,
-         NOW(), NOW() + ($10::text || ' months')::interval, $11::jsonb, NOW(), $12
+         NOW(), NOW() + ($10::text || ' months')::interval, $11::jsonb, NOW(), $12,
+         $13, $14, $15, $16, NULL, NULL, NULL, $17
        )
        RETURNING id, payment_status, payment_method, amount, currency,
-                 subscription_start, subscription_end, metadata, created_at`,
+                 subscription_start, subscription_end, metadata, created_at,
+                 base_price_usd, exchange_rate, payment_currency, converted_amount,
+                 provider_fee_amount, final_charged_amount, final_received_amount, price_quote_id`,
       [
         paymentId, user.id, user.name, user.email, amount, currency, paymentMethod,
         `SIM-${paymentId}`, `pro_subscription_${billingCycle}`,
         cycle.durationMonths, JSON.stringify(activationMetadata), idempotencyKey,
+        configuredPrice, Number(priceQuote.exchange_rate), currency, amount, priceQuoteId,
       ]
     );
     const payment = paymentResult.rows[0];
+    await client.query(
+      `UPDATE subscription_price_quotes SET consumed_at = NOW() WHERE id = $1 AND consumed_at IS NULL`,
+      [priceQuoteId]
+    );
     const subscriptionData = {
       plan: "pro",
       billingCycle,
       durationMonths: cycle.durationMonths,
       paymentId,
       paymentMethod,
+      price: amount,
+      currency,
       activatedAt: payment.subscription_start,
       activationSource: "simulated_payment",
       simulated: true,
       priceConfigured: configuredPrice !== null,
+      basePriceUsd: configuredPrice,
+      exchangeRate: Number(priceQuote.exchange_rate),
+      paymentCurrency: currency,
+      convertedAmount: amount,
+      priceQuoteId,
     };
     const updated = await client.query(
       `UPDATE users
@@ -6927,15 +7143,21 @@ async function startSubscriptionCheckout(req, res) {
     return res.status(200).json({
       ok: true,
       simulated: true,
-      message: configuredPrice === null
-        ? "Development-only simulated checkout completed. No payment was collected because no plan price is configured. KyroS Pro is active for testing."
-        : "Development-only simulated checkout completed. No real payment was collected. KyroS Pro is active for testing.",
+      message: "Development-only simulated checkout completed using the server-issued price quote. No real payment was collected. KyroS Pro is active for testing.",
       payment: {
         id: payment.id,
         status: payment.payment_status,
         method: payment.payment_method,
         amount: Number(payment.amount),
         currency: payment.currency,
+        basePriceUsd: Number(payment.base_price_usd),
+        exchangeRate: Number(payment.exchange_rate),
+        paymentCurrency: payment.payment_currency,
+        convertedAmount: Number(payment.converted_amount),
+        providerFeeAmount: payment.provider_fee_amount == null ? null : Number(payment.provider_fee_amount),
+        finalChargedAmount: payment.final_charged_amount == null ? null : Number(payment.final_charged_amount),
+        finalReceivedAmount: payment.final_received_amount == null ? null : Number(payment.final_received_amount),
+        priceQuoteId: payment.price_quote_id,
         startDate: payment.subscription_start,
         endDate: payment.subscription_end,
       },
@@ -6967,6 +7189,27 @@ async function startFreeTrial(req, res) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const quoteResult = await client.query(
+      `SELECT id, billing_cycle, duration_months, base_price_usd, exchange_rate,
+              payment_currency, converted_amount, expires_at, consumed_at
+         FROM subscription_price_quotes
+        WHERE id = $1 AND billing_cycle = $2
+        FOR UPDATE`,
+      [priceQuoteId, billingCycle]
+    );
+    if (quoteResult.rowCount !== 1 ||
+        Date.parse(quoteResult.rows[0].expires_at) <= Date.now()) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "price_quote_expired", message: "The displayed price quote has expired. Reload the plans to obtain a current quote." });
+    }
+    priceQuote = quoteResult.rows[0];
+    configuredPrice = Number(priceQuote.base_price_usd);
+    amount = Number(priceQuote.converted_amount);
+    currency = String(priceQuote.payment_currency).toUpperCase();
+    if (!(configuredPrice > 0) || !(amount > 0) || !(Number(priceQuote.exchange_rate) > 0) || !/^[A-Z]{3}$/.test(currency)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "invalid_price_quote", message: "The stored price quote is incomplete. Reload plans before checkout." });
+    }
     const found = await client.query(
       `SELECT ${userSelectColumns()} FROM users
         WHERE id = $1 AND deleted_at IS NULL AND account_status = 'active'
