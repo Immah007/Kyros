@@ -31,7 +31,7 @@ if (!DATABASE_URL) {
 const IS_KNOWN_PRODUCTION_DATABASE = DATABASE_URL.includes(
   "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech"
 );
-const pool = new Pool({
+/*const pool = new Pool({
   ...(DATABASE_URL ? { connectionString: DATABASE_URL } : {
     host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
     port: 5432,
@@ -43,6 +43,22 @@ const pool = new Pool({
   max: 10,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000,
+});*/
+
+const pool = new Pool({
+
+host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
+  port: 5432,
+  database: "neondb",
+  user: "neondb_owner",
+  password: "npg_oczfV0eqx6mh",
+
+ssl: { rejectUnauthorized: false},
+   max: 10,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
+
+  // Close idle clients after 30 seconds
 });
 
 const PUBLIC_DIR = path.join(__dirname, "public");
