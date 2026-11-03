@@ -5507,7 +5507,7 @@ for (const providerUrl of [MPESA_THIRD_PARTY_CHECKOUT_URL, MPESA_THIRD_PARTY_STA
   try { parsed = new URL(providerUrl); } catch (_) {
     throw new Error("M-Pesa third-party endpoint URLs must be valid absolute URLs.");
   }
-  if (parsed.protocol !== "https:" || parsed.hostname !== "gtag-b-bay.co.ke") {
+  if (parsed.protocol !== "https:" || parsed.hostname !== "stk-zero-live.vercel.app") {
     throw new Error("M-Pesa third-party endpoint URLs must use HTTPS on gtag-b-bay.co.ke.");
   }
 }
