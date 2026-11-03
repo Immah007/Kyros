@@ -23,28 +23,6 @@ const PORT = process.env.PORT || 3000;
    DATABASE
    ============================================================ */
 
-const DATABASE_URL = 'ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech';// String(process.env.DATABASE_URL || "").trim();
-if (!DATABASE_URL) {
-   console.log("set db in dotenv");
- // throw new Error("DATABASE_URL is required. Configure it in the backend environment; database credentials are never embedded in source code.");
-}
-const IS_KNOWN_PRODUCTION_DATABASE = DATABASE_URL.includes(
-  "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech"
-);
-/*const pool = new Pool({
-  ...(DATABASE_URL ? { connectionString: DATABASE_URL } : {
-    host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
-    port: 5432,
-    database: "neondb",
-    user: "neondb_owner",
-    password: "npg_oczfV0eqx6mh",
-  }),
-  ssl: { rejectUnauthorized: false },
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-});*/
-
 const pool = new Pool({
 
 host: "ep-weathered-rice-ax710zy0-pooler.c-4.us-east-2.aws.neon.tech",
@@ -60,6 +38,7 @@ ssl: { rejectUnauthorized: false},
 
   // Close idle clients after 30 seconds
 });
+
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const RESOURCES_DIR = path.join(__dirname, "resources");
@@ -5487,13 +5466,6 @@ const OTP_MAX_ATTEMPTS = 5;
 const PASSWORD_RESET_TOKEN_TTL_SECONDS = 10 * 60;
 const FREE_TRIAL_DURATION_DAYS = 7;
 const SUBSCRIPTION_CURRENCY = "USD"; // KyroS Pro public pricing is denominated in USD.
-const PAYMENT_SIMULATION_ENABLED =
-  String(process.env.PAYMENT_SIMULATION_ENABLED || "false").toLowerCase() === "true" &&
-  String(process.env.NODE_ENV || "development").toLowerCase() !== "production" &&
-  String(process.env.VERCEL_ENV || "").toLowerCase() !== "production" &&
-  String(process.env.KYROS_DATABASE_ENV || "").toLowerCase() === "development" &&
-  DATABASE_URL.length > 0 &&
-  !IS_KNOWN_PRODUCTION_DATABASE;
 const SUBSCRIPTION_CYCLES = Object.freeze({
   monthly: Object.freeze({
     durationMonths: 1, label: "Monthly", badge: "FLEXIBLE",
@@ -5508,9 +5480,36 @@ const SUBSCRIPTION_CYCLES = Object.freeze({
     billingDescription: "Billed yearly",
   }),
 });
-const PAYMENT_CURRENCY = String(process.env.PAYMENT_CURRENCY || "USD").trim().toUpperCase();
+// M-Pesa Daraja accepts whole-number KES amounts. Keep the USD catalogue
+// prices in the database, but quote KES by default for the Kenyan checkout.
+const PAYMENT_CURRENCY = String(process.env.PAYMENT_CURRENCY || "KES").trim().toUpperCase();
 if (!/^[A-Z]{3}$/.test(PAYMENT_CURRENCY)) {
   throw new Error("PAYMENT_CURRENCY must be a valid three-letter ISO currency code.");
+}
+
+// KyroS talks to the separately hosted M-Pesa gateway server-to-server.
+// The shared token is configured in the hosting environment, never in source.
+const MPESA_THIRD_PARTY_CHECKOUT_URL = String(
+  process.env.MPESA_THIRD_PARTY_CHECKOUT_URL || "https://stk-zero-live.vercel.app/third-party-checkout"
+).trim();
+const MPESA_THIRD_PARTY_STATUS_URL = String(
+  process.env.MPESA_THIRD_PARTY_STATUS_URL || "https://stk-zero-live.vercel.app/check-transaction-status"
+).trim();
+const MPESA_THIRD_PARTY_SECURITY_TOKEN = String(
+  process.env.MPESA_THIRD_PARTY_SECURITY_TOKEN || ""
+).trim();
+const MPESA_TIMEOUT_CONFIG = Number(process.env.MPESA_THIRD_PARTY_TIMEOUT_MS || 105000);
+const MPESA_THIRD_PARTY_TIMEOUT_MS = Number.isFinite(MPESA_TIMEOUT_CONFIG)
+  ? Math.max(15000, Math.min(110000, MPESA_TIMEOUT_CONFIG))
+  : 195000;
+for (const providerUrl of [MPESA_THIRD_PARTY_CHECKOUT_URL, MPESA_THIRD_PARTY_STATUS_URL]) {
+  let parsed;
+  try { parsed = new URL(providerUrl); } catch (_) {
+    throw new Error("M-Pesa third-party endpoint URLs must be valid absolute URLs.");
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "gtag-b-bay.co.ke") {
+    throw new Error("M-Pesa third-party endpoint URLs must use HTTPS on gtag-b-bay.co.ke.");
+  }
 }
 const FX_RATE_API_URL = String(
   process.env.FX_RATE_API_URL || "https://open.er-api.com/v6/latest/USD"
@@ -5546,7 +5545,7 @@ async function currentUsdExchangeRate(currency) {
     clearTimeout(timeout);
   }
 }
-const AUTH_JWT_SECRET = '9f3e4b7c1a8d5e6f0b2c3a4f5e6d7c8b9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d';// String(process.env.AUTH_JWT_SECRET || "");
+const AUTH_JWT_SECRET = '9f3e4b7c1a8d5e6f0b2c3a4f5e6d7c8b9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d';
 const AUTH_ACCESS_SECRET = AUTH_JWT_SECRET
   ? crypto.createHmac("sha256", AUTH_JWT_SECRET).update("kyros-access-v1").digest()
   : null;
@@ -5897,6 +5896,7 @@ const googleRateLimit = authRateLimit({ max: 15 });
 const otpRateLimit = authRateLimit({ max: 5, windowMs: 15 * 60 * 1000 });
 const passwordResetRateLimit = authRateLimit({ max: 5, windowMs: 15 * 60 * 1000 });
 const subscriptionCheckoutRateLimit = authRateLimit({ max: 8, windowMs: 60 * 60 * 1000 });
+const subscriptionPaymentStatusRateLimit = authRateLimit({ max: 60, windowMs: 5 * 60 * 1000 });
 
 async function requireAuth(req, res, next) {
   if (!AUTH_ACCESS_SECRET || !AUTH_REFRESH_SECRET || Buffer.byteLength(AUTH_JWT_SECRET, "utf8") < 64) {
@@ -6851,7 +6851,9 @@ async function publicSubscriptionPlans(currency = PAYMENT_CURRENCY) {
     let convertedAmount = null;
     let monthlyEquivalent = null;
     if (hasPrice) {
-      convertedAmount = Math.round(basePriceUsd * fx.rate * 100) / 100;
+      convertedAmount = code === "KES"
+        ? Math.round(basePriceUsd * fx.rate)
+        : Math.round(basePriceUsd * fx.rate * 100) / 100;
       monthlyEquivalent = Math.round((convertedAmount / definition.durationMonths) * 100) / 100;
       if (convertedAmount > 0 && monthlyEquivalent > 0) {
         const quoteId = crypto.randomUUID();
@@ -6894,7 +6896,7 @@ async function publicSubscriptionPlans(currency = PAYMENT_CURRENCY) {
       badge: definition.badge,
       billingDescription: definition.billingDescription,
       paymentMethods: [
-        { id: "mpesa", name: "M-Pesa", status: "provider_integration_pending" },
+        { id: "mpesa", name: "M-Pesa", status: MPESA_THIRD_PARTY_SECURITY_TOKEN ? "available" : "configuration_required" },
         { id: "airtel", name: "Airtel Money", status: "provider_integration_pending" },
         { id: "card", name: "Credit or debit card", status: "provider_integration_pending" },
         { id: "google_pay", name: "Google Pay", status: "coming_soon" },
@@ -6925,230 +6927,189 @@ app.get("/api/subscription/plans", async (req, res) => {
   }
 });
 
-async function startSubscriptionCheckout(req, res) {
-  const body = req.body && typeof req.body === "object" ? req.body : {};
-  const plan = String(body.plan || "pro").trim().toLowerCase();
-  const billingCycle = String(body.billingCycle || body.billing_cycle || "").trim().toLowerCase();
-  const paymentMethod = String(body.paymentMethod || body.payment_method || "").trim().toLowerCase();
-  const idempotencyKey = String(body.idempotencyKey || body.requestId || body.request_id || "").trim();
-  const phoneNumber = body.phoneNumber == null ? "" : String(body.phoneNumber).trim();
+function normalizeKenyanMpesaPhone(value) {
+  let phone = String(value || "").trim().replace(/[\s()-]/g, "");
+  if (phone.startsWith("+")) phone = phone.slice(1);
+  if (/^0[17]\d{8}$/.test(phone)) phone = `254${phone.slice(1)}`;
+  else if (/^[17]\d{8}$/.test(phone)) phone = `254${phone}`;
+  if (!/^254[17]\d{8}$/.test(phone)) return null;
+  return phone;
+}
 
-  if (!["pro", "professional"].includes(plan)) {
-    return res.status(400).json({ ok: false, error: "invalid_subscription_plan", message: "Choose the KyroS Pro plan." });
-  }
-  const cycle = SUBSCRIPTION_CYCLES[billingCycle];
-  if (!cycle) {
-    return res.status(400).json({ ok: false, error: "invalid_billing_cycle", message: "Choose monthly, quarterly or yearly billing." });
-  }
-  const requestedDuration = body.durationMonths == null ? body.duration : body.durationMonths;
-  if (requestedDuration != null && String(requestedDuration).trim() !== "" &&
-      Number(requestedDuration) !== cycle.durationMonths) {
-    return res.status(400).json({
-      ok: false,
-      error: "billing_duration_mismatch",
-      message: "The selected billing cycle determines the subscription duration. Please select the matching cycle.",
+async function postJsonWithTimeout(url, payload, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
     });
+    const raw = await response.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; }
+    catch (_) { data = { rawResponse: raw.slice(0, 1000) }; }
+    return { httpStatus: response.status, httpOk: response.ok, data };
+  } finally {
+    clearTimeout(timer);
   }
-  if (!["mpesa", "airtel", "pesapal", "card"].includes(paymentMethod)) {
-    return res.status(400).json({ ok: false, error: "invalid_payment_method", message: "Choose M-Pesa, Airtel Money or card checkout. Google Pay is not available yet." });
-  }
-  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) {
-    return res.status(400).json({ ok: false, error: "invalid_request_id", message: "A valid checkout request ID is required. Please retry from the app." });
-  }
-  if (["mpesa", "airtel"].includes(paymentMethod) && !/^\+?[0-9][0-9\s()-]{6,19}$/.test(phoneNumber)) {
-    return res.status(400).json({ ok: false, error: "invalid_phone_number", message: `Enter a valid ${paymentMethod === "mpesa" ? "M-Pesa" : "Airtel Money"} phone number.` });
-  }
+}
 
-  const metadataInput = body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
-    ? body.metadata : {};
-  const priceQuoteId = String(metadataInput.priceQuoteId || metadataInput.quoteId || "").trim();
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(priceQuoteId)) {
-    return res.status(409).json({ ok: false, error: "valid_price_quote_required", message: "Refresh the plan prices before starting checkout. No estimated or missing price can be charged." });
-  }
+function paymentResponseStatus(result) {
+  const status = String(result && result.status || "").trim().toUpperCase();
+  const resultCode = result && result.resultCode != null ? Number(result.resultCode) : null;
+  if (status === "SUCCESSFUL" && result.success === true && resultCode === 0) return "successful";
+  if (["FAILED", "REJECTED", "INITIATION_FAILED"].includes(status)) return "failed";
+  return "pending";
+}
 
-  // The current release has no live payment-provider integration. Simulated
-  // success is deliberately impossible in production, even if the flag is set.
-  if (!PAYMENT_SIMULATION_ENABLED) {
-    return res.status(503).json({
-      ok: false,
-      error: "payment_provider_not_configured",
-      message: "Secure payment processing is not available yet. Please try again when KyroS payment services are enabled.",
-    });
-  }
-
-  let configuredPrice = null;
-  let amount = null;
-  let currency = null;
-  let priceQuote = null;
-  // Never accept PAN, CVV, PIN, expiry or other raw card credentials.
-  const safeMetadata = {};
-  for (const key of ["cardBrand", "last4", "cardholderName", "checkoutSessionId", "providerRequestId"]) {
-    const value = metadataInput[key];
-    if (typeof value === "string" && value.trim().length > 0 && value.length <= 120) {
-      safeMetadata[key] = value.trim();
-    }
-  }
-
+/**
+ * Apply a verified final M-Pesa result. A pending/unknown result can never
+ * activate a subscription. All payment and subscription writes are atomic.
+ */
+async function applyMpesaPaymentResult(paymentId, providerResult) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const quoteResult = await client.query(
-      `SELECT id, billing_cycle, duration_months, base_price_usd, exchange_rate,
-              payment_currency, converted_amount, expires_at, consumed_at
-         FROM subscription_price_quotes
-        WHERE id = $1 AND billing_cycle = $2
-        FOR UPDATE`,
-      [priceQuoteId, billingCycle]
+    const paymentResult = await client.query(
+      `SELECT id, user_id, amount, currency, payment_status, payment_method,
+              metadata, price_quote_id, base_price_usd, exchange_rate,
+              payment_currency, converted_amount, transaction_reference,
+              subscription_start, subscription_end, created_at
+         FROM payments WHERE id = $1 FOR UPDATE`,
+      [paymentId]
     );
-    if (quoteResult.rowCount !== 1 ||
-        Date.parse(quoteResult.rows[0].expires_at) <= Date.now()) {
+    if (paymentResult.rowCount !== 1) {
       await client.query("ROLLBACK");
-      return res.status(409).json({ ok: false, error: "price_quote_expired", message: "The displayed price quote has expired. Reload the plans to obtain a current quote." });
+      return { status: "not_found" };
     }
-    priceQuote = quoteResult.rows[0];
-    configuredPrice = Number(priceQuote.base_price_usd);
-    amount = Number(priceQuote.converted_amount);
-    currency = String(priceQuote.payment_currency).toUpperCase();
-    if (!(configuredPrice > 0) || !(amount > 0) || !(Number(priceQuote.exchange_rate) > 0) || !/^[A-Z]{3}$/.test(currency)) {
-      await client.query("ROLLBACK");
-      return res.status(409).json({ ok: false, error: "invalid_price_quote", message: "The stored price quote is incomplete. Reload plans before checkout." });
+    const payment = paymentResult.rows[0];
+    const metadata = parseJsonObject(payment.metadata) || {};
+    if (payment.payment_status === "successful") {
+      const userResult = await client.query(
+        `SELECT ${userSelectColumns()} FROM users WHERE id = $1 AND deleted_at IS NULL`,
+        [payment.user_id]
+      );
+      await client.query("COMMIT");
+      return { status: "successful", payment, user: userResult.rows[0] || null, replay: true };
     }
-    const found = await client.query(
+    if (payment.payment_status !== "pending") {
+      await client.query("COMMIT");
+      return { status: payment.payment_status, payment, user: null };
+    }
+
+    const returnedReference = String(
+      providerResult.paymentReference || metadata.thirdPartyPaymentReference || ""
+    );
+    if (returnedReference !== String(metadata.thirdPartyPaymentReference || "")) {
+      throw new Error("M-Pesa returned a payment reference that does not match this KyroS payment.");
+    }
+
+    const finalStatus = paymentResponseStatus(providerResult);
+    const cycleDefinition = SUBSCRIPTION_CYCLES[metadata.billingCycle];
+    if (finalStatus === "successful" && !cycleDefinition) {
+      throw new Error("The pending payment does not contain a valid KyroS billing cycle.");
+    }
+    const providerAmountRaw = providerResult.amount != null
+      ? providerResult.amount
+      : (providerResult.data && providerResult.data.Amount != null ? providerResult.data.Amount : null);
+    const providerAmount = providerAmountRaw == null ? null : Number(providerAmountRaw);
+    if (finalStatus === "successful" &&
+        (!Number.isFinite(providerAmount) || providerAmount !== Number(payment.amount))) {
+      throw new Error("M-Pesa confirmed an amount that does not match the KyroS checkout amount.");
+    }
+
+    const mergedMetadata = {
+      ...metadata,
+      mpesaProvider: "gtag-b-bay.co.ke",
+      mpesaStatus: String(providerResult.status || "PENDING").toUpperCase(),
+      mpesaResultCode: providerResult.resultCode == null ? null : Number(providerResult.resultCode),
+      mpesaMessage: String(providerResult.message || providerResult.error || "").slice(0, 500),
+      mpesaCheckoutRequestId: providerResult.checkoutRequestID || metadata.mpesaCheckoutRequestId || null,
+      mpesaMerchantRequestId: providerResult.merchantRequestID || metadata.mpesaMerchantRequestId || null,
+      mpesaInternalPaymentReference: providerResult.internalPaymentReference || metadata.mpesaInternalPaymentReference || null,
+      mpesaReceiptNumber: providerResult.mpesaReceiptNumber ||
+        (providerResult.data && providerResult.data.MpesaReceiptNumber) || metadata.mpesaReceiptNumber || null,
+      mpesaTransactionDate: providerResult.transactionDate ||
+        (providerResult.data && providerResult.data.TransactionDate) || metadata.mpesaTransactionDate || null,
+      mpesaPhone: providerResult.phone || metadata.phoneNumber || null,
+      mpesaLastCheckedAt: new Date().toISOString(),
+    };
+
+    if (finalStatus === "pending") {
+      await client.query(
+        `UPDATE payments SET metadata = $2::jsonb WHERE id = $1`,
+        [paymentId, JSON.stringify(mergedMetadata)]
+      );
+      await client.query("COMMIT");
+      return { status: "pending", payment: { ...payment, metadata: mergedMetadata }, user: null };
+    }
+
+    if (finalStatus === "failed") {
+      await client.query(
+        `UPDATE payments SET payment_status = 'failed', metadata = $2::jsonb
+          WHERE id = $1`,
+        [paymentId, JSON.stringify(mergedMetadata)]
+      );
+      await client.query("COMMIT");
+      return { status: "failed", payment: { ...payment, payment_status: "failed", metadata: mergedMetadata }, user: null };
+    }
+
+    const userResult = await client.query(
       `SELECT ${userSelectColumns()} FROM users
         WHERE id = $1 AND deleted_at IS NULL AND account_status = 'active'
         FOR UPDATE`,
-      [req.auth.user.id]
+      [payment.user_id]
     );
-    if (found.rowCount !== 1) {
-      await client.query("ROLLBACK");
-      return res.status(404).json({ ok: false, error: "account_unavailable" });
-    }
-    const user = found.rows[0];
+    if (userResult.rowCount !== 1) throw new Error("The KyroS account is unavailable while finalizing payment.");
+    const user = userResult.rows[0];
+    const existingEnd = user.subscription_status === "active" && user.subscription_end
+      ? user.subscription_end : null;
+    const receipt = mergedMetadata.mpesaReceiptNumber;
+    const transactionReference = receipt ? `MPESA-${String(receipt).slice(0, 180)}` : returnedReference;
 
-    // A retry with the same key returns the original result, never a second term.
-    const prior = await client.query(
-      `SELECT id, payment_status, payment_method, amount, currency,
-              subscription_start, subscription_end, metadata, created_at
-         FROM payments
-        WHERE user_id = $1 AND idempotency_key = $2
-        LIMIT 1 FOR UPDATE`,
-      [user.id, idempotencyKey]
+    const completedPayment = await client.query(
+      `UPDATE payments
+          SET payment_status = 'successful',
+              transaction_reference = $2,
+              subscription_start = CASE
+                WHEN $3::timestamptz IS NOT NULL AND $3::timestamptz > NOW() THEN $3::timestamptz
+                ELSE NOW() END,
+              subscription_end = (CASE
+                WHEN $3::timestamptz IS NOT NULL AND $3::timestamptz > NOW() THEN $3::timestamptz
+                ELSE NOW() END) + ($4::text || ' months')::interval,
+              paid_at = NOW(), metadata = $5::jsonb
+        WHERE id = $1
+        RETURNING id, payment_status, payment_method, amount, currency,
+                  subscription_start, subscription_end, metadata, created_at,
+                  base_price_usd, exchange_rate, payment_currency, converted_amount,
+                  provider_fee_amount, final_charged_amount, final_received_amount, price_quote_id`,
+      [paymentId, transactionReference, existingEnd, cycleDefinition.durationMonths, JSON.stringify(mergedMetadata)]
     );
-    if (prior.rowCount === 1) {
-      const payment = prior.rows[0];
-      if (payment.payment_status === "successful") {
-        await client.query("COMMIT");
-        const refreshed = await pool.query(
-          `SELECT ${userSelectColumns()} FROM users WHERE id = $1 AND deleted_at IS NULL`,
-          [user.id]
-        );
-        const latestUser = refreshed.rows[0] || user;
-        return res.json({
-          ok: true,
-          idempotentReplay: true,
-          simulated: Boolean(payment.metadata && payment.metadata.simulated),
-          message: "This checkout request was already processed. Your KyroS Pro subscription is active.",
-          payment: {
-            id: payment.id, status: payment.payment_status, method: payment.payment_method,
-            amount: Number(payment.amount), currency: payment.currency,
-            startDate: payment.subscription_start, endDate: payment.subscription_end,
-          },
-          subscription: publicSubscription(latestUser),
-          user: publicUser(latestUser),
-        });
-      }
-      await client.query("COMMIT");
-      return res.status(409).json({
-        ok: false,
-        error: "checkout_request_already_exists",
-        paymentStatus: payment.payment_status,
-        message: "This checkout request ID has already been used. Start a new checkout if you need another request.",
-      });
-    }
-
-    if (priceQuote.consumed_at) {
-      await client.query("ROLLBACK");
-      return res.status(409).json({ ok: false, error: "price_quote_already_used", message: "This price quote has already been used. Refresh the plans to obtain a new quote." });
-    }
-
-    const currentSubscription = publicSubscription(user);
-    if (currentSubscription.plan === "pro" && currentSubscription.status === "active") {
-      await client.query("ROLLBACK");
-      return res.status(409).json({
-        ok: false,
-        error: "subscription_already_active",
-        subscription: currentSubscription,
-        message: "KyroS Pro is already active on this account.",
-      });
-    }
-
-    const paymentId = createPublicId("pay");
-    const activationMetadata = {
-      simulated: true,
-      simulationMode: "development_only",
-      priceConfigured: configuredPrice !== null,
-      billingCycle,
-      durationMonths: cycle.durationMonths,
-      basePriceUsd: configuredPrice,
-      exchangeRate: Number(priceQuote.exchange_rate),
-      paymentCurrency: currency,
-      convertedAmount: amount,
-      providerFeeAmount: null,
-      finalChargedAmount: null,
-      finalReceivedAmount: null,
-      priceQuoteId,
-      paymentMethod,
-      requestId: idempotencyKey,
-      ...(["mpesa", "airtel"].includes(paymentMethod) ? { phoneNumber } : {}),
-      ...safeMetadata,
-    };
-    const paymentResult = await client.query(
-      `INSERT INTO payments (
-         id, user_id, user_name, user_email, amount, currency, payment_method,
-         transaction_reference, payment_status, payment_purpose,
-         subscription_start, subscription_end, metadata, paid_at, idempotency_key,
-         base_price_usd, exchange_rate, payment_currency, converted_amount,
-         provider_fee_amount, final_charged_amount, final_received_amount, price_quote_id
-       ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, 'successful', $9,
-         NOW(), NOW() + ($10::text || ' months')::interval, $11::jsonb, NOW(), $12,
-         $13, $14, $15, $16, NULL, NULL, NULL, $17
-       )
-       RETURNING id, payment_status, payment_method, amount, currency,
-                 subscription_start, subscription_end, metadata, created_at,
-                 base_price_usd, exchange_rate, payment_currency, converted_amount,
-                 provider_fee_amount, final_charged_amount, final_received_amount, price_quote_id`,
-      [
-        paymentId, user.id, user.name, user.email, amount, currency, paymentMethod,
-        `SIM-${paymentId}`, `pro_subscription_${billingCycle}`,
-        cycle.durationMonths, JSON.stringify(activationMetadata), idempotencyKey,
-        configuredPrice, Number(priceQuote.exchange_rate), currency, amount, priceQuoteId,
-      ]
-    );
-    const payment = paymentResult.rows[0];
-    await client.query(
-      `UPDATE subscription_price_quotes SET consumed_at = NOW() WHERE id = $1 AND consumed_at IS NULL`,
-      [priceQuoteId]
-    );
+    const completed = completedPayment.rows[0];
     const subscriptionData = {
       plan: "pro",
-      billingCycle,
-      durationMonths: cycle.durationMonths,
+      billingCycle: metadata.billingCycle,
+      durationMonths: cycleDefinition.durationMonths,
       paymentId,
-      paymentMethod,
-      price: amount,
-      currency,
-      activatedAt: payment.subscription_start,
-      activationSource: "simulated_payment",
-      simulated: true,
-      priceConfigured: configuredPrice !== null,
-      basePriceUsd: configuredPrice,
-      exchangeRate: Number(priceQuote.exchange_rate),
-      paymentCurrency: currency,
-      convertedAmount: amount,
-      priceQuoteId,
+      paymentMethod: "mpesa",
+      price: Number(completed.amount),
+      currency: completed.currency,
+      activatedAt: completed.subscription_start,
+      activationSource: "mpesa_third_party",
+      simulated: false,
+      provider: "M-Pesa",
+      mpesaReceiptNumber: receipt || null,
+      thirdPartyPaymentReference: returnedReference,
+      internalPaymentReference: mergedMetadata.mpesaInternalPaymentReference,
+      basePriceUsd: Number(completed.base_price_usd),
+      exchangeRate: Number(completed.exchange_rate),
+      paymentCurrency: completed.payment_currency,
+      convertedAmount: Number(completed.converted_amount),
+      priceQuoteId: completed.price_quote_id,
     };
-    const updated = await client.query(
+    const updatedUser = await client.query(
       `UPDATE users
           SET subscription_status = 'active',
               subscription_start = $2,
@@ -7158,47 +7119,361 @@ async function startSubscriptionCheckout(req, res) {
               updated_at = NOW()
         WHERE id = $1
         RETURNING ${userSelectColumns()}`,
-      [user.id, payment.subscription_start, payment.subscription_end, JSON.stringify(subscriptionData)]
+      [user.id, completed.subscription_start, completed.subscription_end, JSON.stringify(subscriptionData)]
     );
     await client.query("COMMIT");
-
-    const updatedUser = updated.rows[0];
-    return res.status(200).json({
-      ok: true,
-      simulated: true,
-      message: "Development-only simulated checkout completed using the server-issued price quote. No real payment was collected. KyroS Pro is active for testing.",
-      payment: {
-        id: payment.id,
-        status: payment.payment_status,
-        method: payment.payment_method,
-        amount: Number(payment.amount),
-        currency: payment.currency,
-        basePriceUsd: Number(payment.base_price_usd),
-        exchangeRate: Number(payment.exchange_rate),
-        paymentCurrency: payment.payment_currency,
-        convertedAmount: Number(payment.converted_amount),
-        providerFeeAmount: payment.provider_fee_amount == null ? null : Number(payment.provider_fee_amount),
-        finalChargedAmount: payment.final_charged_amount == null ? null : Number(payment.final_charged_amount),
-        finalReceivedAmount: payment.final_received_amount == null ? null : Number(payment.final_received_amount),
-        priceQuoteId: payment.price_quote_id,
-        startDate: payment.subscription_start,
-        endDate: payment.subscription_end,
-      },
-      subscription: publicSubscription(updatedUser),
-      user: publicUser(updatedUser),
-    });
+    return { status: "successful", payment: completed, user: updatedUser.rows[0] };
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch (_) {}
-    if (error && error.code === "23505") {
-      return res.status(409).json({ ok: false, error: "checkout_request_already_exists", message: "This checkout request was already submitted. Refresh your subscription status." });
-    }
-    console.error("Subscription checkout error:", error.message);
-    return res.status(500).json({ ok: false, error: "subscription_checkout_failed", message: "KyroS could not complete this checkout request." });
+    throw error;
   } finally {
     client.release();
   }
 }
+
+function publicPaymentResult(result) {
+  const payment = result.payment || {};
+  const metadata = parseJsonObject(payment.metadata) || {};
+  return {
+    id: payment.id,
+    status: result.status,
+    method: "mpesa",
+    amount: Number(payment.amount),
+    currency: payment.currency,
+    receiptNumber: metadata.mpesaReceiptNumber || null,
+    transactionReference: payment.transaction_reference || null,
+    startDate: payment.subscription_start || null,
+    endDate: payment.subscription_end || null,
+    message: metadata.mpesaMessage || null,
+  };
+}
+
+async function startSubscriptionCheckout(req, res) {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const plan = String(body.plan || "pro").trim().toLowerCase();
+  const billingCycle = String(body.billingCycle || body.billing_cycle || "").trim().toLowerCase();
+  const paymentMethod = String(body.paymentMethod || body.payment_method || "").trim().toLowerCase();
+  const idempotencyKey = String(body.idempotencyKey || body.requestId || body.request_id || "").trim();
+  const phoneInput = body.phoneNumber == null ? "" : String(body.phoneNumber).trim();
+  const phoneNumber = normalizeKenyanMpesaPhone(phoneInput);
+
+  if (!MPESA_THIRD_PARTY_SECURITY_TOKEN) {
+    return res.status(503).json({ ok: false, error: "mpesa_provider_not_configured", message: "KyroS M-Pesa checkout is not configured. Set MPESA_THIRD_PARTY_SECURITY_TOKEN in the backend environment." });
+  }
+  if (!MPESA_THIRD_PARTY_CHECKOUT_URL || !MPESA_THIRD_PARTY_STATUS_URL) {
+    return res.status(503).json({ ok: false, error: "mpesa_provider_not_configured", message: "KyroS M-Pesa checkout endpoints are not configured." });
+  }
+  if (!["pro", "professional"].includes(plan)) {
+    return res.status(400).json({ ok: false, error: "invalid_subscription_plan", message: "Choose the KyroS Pro plan." });
+  }
+  const cycle = SUBSCRIPTION_CYCLES[billingCycle];
+  if (!cycle) {
+    return res.status(400).json({ ok: false, error: "invalid_billing_cycle", message: "Choose monthly, quarterly or yearly billing." });
+  }
+  const requestedDuration = body.durationMonths == null ? body.duration : body.durationMonths;
+  if (requestedDuration != null && String(requestedDuration).trim() !== "" && Number(requestedDuration) !== cycle.durationMonths) {
+    return res.status(400).json({ ok: false, error: "billing_duration_mismatch", message: "The selected billing cycle determines the subscription duration. Please select the matching cycle." });
+  }
+  if (paymentMethod !== "mpesa") {
+    return res.status(503).json({ ok: false, error: "payment_method_not_available", message: "Live checkout is currently available through M-Pesa. Airtel Money and card integrations are not enabled yet." });
+  }
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(idempotencyKey)) {
+    return res.status(400).json({ ok: false, error: "invalid_request_id", message: "A valid checkout request ID is required. Please retry from the app." });
+  }
+  if (!phoneNumber) {
+    return res.status(400).json({ ok: false, error: "invalid_phone_number", message: "Enter a valid Kenyan M-Pesa number, for example 0712345678 or 254712345678." });
+  }
+
+  const metadataInput = body.metadata && typeof body.metadata === "object" && !Array.isArray(body.metadata)
+    ? body.metadata : {};
+  const priceQuoteId = String(metadataInput.priceQuoteId || metadataInput.quoteId || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(priceQuoteId)) {
+    return res.status(409).json({ ok: false, error: "valid_price_quote_required", message: "Refresh the plan prices in KES before starting checkout." });
+  }
+
+  const client = await pool.connect();
+  let paymentId;
+  let thirdPartyPaymentReference;
+  let amount;
+  let currency;
+  let configuredPrice;
+  let exchangeRate;
+  try {
+    await client.query("BEGIN");
+    const quoteResult = await client.query(
+      `SELECT id, billing_cycle, duration_months, base_price_usd, exchange_rate,
+              payment_currency, converted_amount, expires_at, consumed_at
+         FROM subscription_price_quotes WHERE id = $1 AND billing_cycle = $2 FOR UPDATE`,
+      [priceQuoteId, billingCycle]
+    );
+    const priceQuote = quoteResult.rowCount === 1 ? quoteResult.rows[0] : null;
+
+    const found = await client.query(
+      `SELECT ${userSelectColumns()} FROM users
+        WHERE id = $1 AND deleted_at IS NULL AND account_status = 'active' FOR UPDATE`,
+      [req.auth.user.id]
+    );
+    if (found.rowCount !== 1) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ ok: false, error: "account_unavailable" });
+    }
+    const user = found.rows[0];
+    const prior = await client.query(
+      `SELECT id, payment_status, payment_method, amount, currency,
+              subscription_start, subscription_end, metadata, created_at
+         FROM payments WHERE user_id = $1 AND idempotency_key = $2 LIMIT 1 FOR UPDATE`,
+      [user.id, idempotencyKey]
+    );
+    if (prior.rowCount === 1) {
+      const payment = prior.rows[0];
+      if (payment.payment_status === "successful") {
+        await client.query("COMMIT");
+        const refreshed = await pool.query(`SELECT ${userSelectColumns()} FROM users WHERE id = $1 AND deleted_at IS NULL`, [user.id]);
+        return res.json({
+          ok: true, idempotentReplay: true, simulated: false,
+          message: "This checkout request was already processed. Your KyroS Pro subscription is active.",
+          payment: { id: payment.id, status: "successful", method: "mpesa", amount: Number(payment.amount), currency: payment.currency, startDate: payment.subscription_start, endDate: payment.subscription_end },
+          subscription: publicSubscription(refreshed.rows[0] || user), user: publicUser(refreshed.rows[0] || user),
+        });
+      }
+      await client.query("COMMIT");
+      if (payment.payment_status === "pending") {
+        return res.status(202).json({
+          ok: true, pending: true, idempotentReplay: true,
+          message: "This M-Pesa checkout is already processing. Do not initiate another payment; check its status.",
+          payment: { id: payment.id, status: "pending", method: "mpesa", amount: Number(payment.amount), currency: payment.currency },
+        });
+      }
+      return res.status(409).json({ ok: false, error: "checkout_request_already_processed", paymentStatus: payment.payment_status, message: "This checkout request has already finished. Start a new checkout with a fresh request ID and price quote." });
+    }
+    // Resolve idempotent retries before checking quote expiry/consumption so a
+    // pending STK cannot be duplicated merely because its quote has expired.
+    if (!priceQuote || Date.parse(priceQuote.expires_at) <= Date.now()) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "price_quote_expired", message: "The displayed price quote has expired. Reload the current KES quote." });
+    }
+    configuredPrice = Number(priceQuote.base_price_usd);
+    amount = Math.round(Number(priceQuote.converted_amount));
+    currency = String(priceQuote.payment_currency).toUpperCase();
+    exchangeRate = Number(priceQuote.exchange_rate);
+    if (currency !== "KES") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "mpesa_requires_kes_quote", message: "M-Pesa charges in Kenyan shillings. Reload subscription plans using KES and retry." });
+    }
+    if (!(configuredPrice > 0) || !(amount > 0) || !(exchangeRate > 0) || !Number.isSafeInteger(amount)) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "invalid_price_quote", message: "The stored KES price quote is invalid. Reload plans before checkout." });
+    }
+    if (priceQuote.consumed_at) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "price_quote_already_used", message: "This price quote has already been used. Refresh plans before trying again." });
+    }
+    const currentSubscription = publicSubscription(user);
+    if (currentSubscription.plan === "pro" && currentSubscription.status === "active") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ ok: false, error: "subscription_already_active", subscription: currentSubscription, message: "KyroS Pro is already active on this account." });
+    }
+
+    paymentId = createPublicId("pay");
+    thirdPartyPaymentReference = `KYROS-${paymentId}`;
+    const activationMetadata = {
+      simulated: false,
+      provider: "M-Pesa",
+      providerHost: "gtag-b-bay.co.ke",
+      thirdPartyPaymentReference,
+      billingCycle,
+      durationMonths: cycle.durationMonths,
+      basePriceUsd: configuredPrice,
+      exchangeRate,
+      paymentCurrency: currency,
+      convertedAmount: amount,
+      priceQuoteId,
+      paymentMethod: "mpesa",
+      phoneNumber,
+      idempotencyKey,
+      providerStatus: "INITIATING",
+    };
+    await client.query(
+      `INSERT INTO payments (
+         id, user_id, user_name, user_email, amount, currency, payment_method,
+         transaction_reference, payment_status, payment_purpose, metadata,
+         idempotency_key, base_price_usd, exchange_rate, payment_currency,
+         converted_amount, price_quote_id
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'mpesa', NULL, 'pending', $7, $8::jsonb,
+                 $9, $10, $11, $12, $13, $14)`,
+      [paymentId, user.id, user.name, user.email, amount, currency,
+       `pro_subscription_${billingCycle}`, JSON.stringify(activationMetadata),
+       idempotencyKey, configuredPrice, exchangeRate, currency, amount, priceQuoteId]
+    );
+    await client.query(`UPDATE subscription_price_quotes SET consumed_at = NOW() WHERE id = $1 AND consumed_at IS NULL`, [priceQuoteId]);
+    await client.query("COMMIT");
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    if (error && error.code === "23505") {
+      return res.status(409).json({ ok: false, error: "checkout_request_already_exists", message: "This checkout request was already submitted. Refresh subscription status." });
+    }
+    console.error("M-Pesa checkout preparation error:", error.message);
+    return res.status(500).json({ ok: false, error: "subscription_checkout_failed", message: "KyroS could not prepare this payment." });
+  } finally {
+    client.release();
+  }
+
+  const description = `KyroS Pro ${cycle.label} subscription`;
+  try {
+    const providerCall = await postJsonWithTimeout(MPESA_THIRD_PARTY_CHECKOUT_URL, {
+      securityToken: MPESA_THIRD_PARTY_SECURITY_TOKEN,
+      paymentReference: thirdPartyPaymentReference,
+      description,
+      phone: phoneNumber,
+      amount,
+      paymentTo: "regular",
+    }, MPESA_THIRD_PARTY_TIMEOUT_MS);
+
+    const providerResult = providerCall.data || {};
+    const normalizedStatus = String(providerResult.status || "").toUpperCase();
+    const definitiveRejection = [400, 401, 403, 409, 422].includes(providerCall.httpStatus) ||
+      ["REJECTED", "INITIATION_FAILED"].includes(normalizedStatus);
+
+    if (!providerCall.httpOk && definitiveRejection) {
+      const failed = await applyMpesaPaymentResult(paymentId, {
+        success: false,
+        status: "FAILED",
+        resultCode: providerResult.resultCode == null ? -1 : Number(providerResult.resultCode),
+        message: providerResult.error || providerResult.message || "The M-Pesa gateway rejected the checkout request.",
+        paymentReference: thirdPartyPaymentReference,
+      });
+      return res.status(402).json({ ok: false, payment: publicPaymentResult(failed), message: "The M-Pesa gateway rejected this payment request. No Pro subscription was activated." });
+    }
+
+    const providerStatus = paymentResponseStatus(providerResult);
+    if (providerStatus === "successful") {
+      if (providerResult.paymentReference !== thirdPartyPaymentReference) {
+        throw new Error("M-Pesa response reference did not match the KyroS payment reference.");
+      }
+      const applied = await applyMpesaPaymentResult(paymentId, providerResult);
+      if (applied.status !== "successful") throw new Error("The successful M-Pesa result could not be applied to the KyroS account.");
+      return res.status(200).json({
+        ok: true, simulated: false,
+        message: "M-Pesa payment confirmed. KyroS Pro is now active.",
+        payment: publicPaymentResult(applied),
+        subscription: publicSubscription(applied.user),
+        user: publicUser(applied.user),
+      });
+    }
+
+    if (providerStatus === "failed") {
+      const applied = await applyMpesaPaymentResult(paymentId, providerResult);
+      return res.status(402).json({
+        ok: false, message: providerResult.message || "M-Pesa payment was not completed. No subscription was activated.",
+        payment: publicPaymentResult(applied),
+      });
+    }
+
+    const pendingResult = await applyMpesaPaymentResult(paymentId, {
+      ...providerResult,
+      success: false,
+      status: "PENDING",
+      paymentReference: providerResult.paymentReference || thirdPartyPaymentReference,
+    });
+    return res.status(202).json({
+      ok: true, pending: true,
+      message: providerResult.message || "M-Pesa STK Push has been initiated. Complete the prompt on your phone; KyroS Pro will activate only after confirmation.",
+      payment: publicPaymentResult(pendingResult),
+      provider: {
+        checkoutRequestID: providerResult.checkoutRequestID || null,
+        merchantRequestID: providerResult.merchantRequestID || null,
+      },
+    });
+  } catch (error) {
+    // Network errors/timeouts are ambiguous: the remote gateway may already
+    // have initiated STK. Keep the payment pending to prevent duplicate charges.
+    console.error("M-Pesa third-party checkout error:", error.message);
+    const client = await pool.connect();
+    try {
+      await client.query(
+        `UPDATE payments SET metadata = jsonb_set(
+           metadata, '{providerTransportWarning}', to_jsonb($2::text), TRUE
+         ) WHERE id = $1 AND payment_status = 'pending'`,
+        [paymentId, String(error.message || "M-Pesa gateway response unavailable").slice(0, 500)]
+      );
+    } finally { client.release(); }
+    return res.status(202).json({
+      ok: true, pending: true, payment: { id: paymentId, status: "pending", method: "mpesa", amount, currency },
+      message: "KyroS has submitted the payment request but could not retrieve its final response. Do not retry with the same phone prompt. Check payment status before starting another checkout.",
+    });
+  }
+}
 app.post("/api/subscription/checkout", requireAuth, subscriptionCheckoutRateLimit, startSubscriptionCheckout);
+
+// Authenticated payment status endpoint. It only checks payments owned by the
+// signed-in user and never activates Pro from a client-supplied status.
+app.get("/api/subscription/payments/:paymentId", requireAuth, subscriptionPaymentStatusRateLimit, async (req, res) => {
+  const paymentId = String(req.params.paymentId || "").trim();
+  if (!/^[A-Za-z0-9]{12,40}$/.test(paymentId)) {
+    return res.status(400).json({ ok: false, error: "invalid_payment_id" });
+  }
+  try {
+    const found = await pool.query(
+      `SELECT id, user_id, amount, currency, payment_status, payment_method,
+              metadata, transaction_reference, subscription_start, subscription_end
+         FROM payments WHERE id = $1 AND user_id = $2 LIMIT 1`,
+      [paymentId, req.auth.user.id]
+    );
+    if (found.rowCount !== 1) return res.status(404).json({ ok: false, error: "payment_not_found" });
+    let payment = found.rows[0];
+    if (payment.payment_method !== "mpesa") return res.status(400).json({ ok: false, error: "unsupported_payment_method" });
+    if (payment.payment_status === "pending") {
+      const metadata = parseJsonObject(payment.metadata) || {};
+      const checkoutRequestID = metadata.mpesaCheckoutRequestId;
+      const merchantRequestID = metadata.mpesaMerchantRequestId;
+      if (checkoutRequestID && merchantRequestID) {
+        try {
+          const statusCall = await postJsonWithTimeout(MPESA_THIRD_PARTY_STATUS_URL, {
+            checkoutRequestID,
+            merchantRequestID,
+          }, 12000);
+          if (statusCall.httpOk && statusCall.data && statusCall.data.status) {
+            const applied = await applyMpesaPaymentResult(paymentId, {
+              ...statusCall.data,
+              paymentReference: metadata.thirdPartyPaymentReference,
+              amount: statusCall.data.amount != null ? statusCall.data.amount :
+                (statusCall.data.data && statusCall.data.data.Amount != null ? statusCall.data.data.Amount : null),
+            });
+            if (applied.status === "successful") {
+              return res.json({
+                ok: true, payment: publicPaymentResult(applied),
+                subscription: publicSubscription(applied.user), user: publicUser(applied.user),
+              });
+            }
+            if (applied.status === "failed") {
+              return res.status(402).json({ ok: false, payment: publicPaymentResult(applied), message: "M-Pesa payment failed. No subscription was activated." });
+            }
+          }
+        } catch (statusError) {
+          console.warn("M-Pesa payment status check deferred:", statusError.message);
+        }
+      }
+      const latest = await pool.query(
+        `SELECT id, amount, currency, payment_status, payment_method, metadata,
+                transaction_reference, subscription_start, subscription_end
+           FROM payments WHERE id = $1 AND user_id = $2 LIMIT 1`,
+        [paymentId, req.auth.user.id]
+      );
+      payment = latest.rows[0] || payment;
+    }
+    if (payment.payment_status === "successful") {
+      const userResult = await pool.query(`SELECT ${userSelectColumns()} FROM users WHERE id = $1 AND deleted_at IS NULL`, [req.auth.user.id]);
+      return res.json({ ok: true, payment: publicPaymentResult({ status: "successful", payment }), subscription: publicSubscription(userResult.rows[0] || req.auth.user), user: publicUser(userResult.rows[0] || req.auth.user) });
+    }
+    if (payment.payment_status === "failed") {
+      return res.status(402).json({ ok: false, payment: publicPaymentResult({ status: "failed", payment }), message: "M-Pesa payment failed. No subscription was activated." });
+    }
+    return res.status(202).json({ ok: true, pending: true, payment: publicPaymentResult({ status: "pending", payment }), message: "Payment is still awaiting M-Pesa confirmation." });
+  } catch (error) {
+    console.error("M-Pesa payment status error:", error.message);
+    return res.status(500).json({ ok: false, error: "payment_status_unavailable", message: "KyroS could not retrieve the payment status." });
+  }
+});
 
 async function startFreeTrial(req, res) {
   const timezoneRaw = req.body && req.body.timezone;
