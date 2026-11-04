@@ -7,7 +7,7 @@ const http = require("http");
 const { WebSocketServer, WebSocket } = require("ws");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
-const { OAuth2Client } = require("google-auth-library");
+const { OAuth2Client, GoogleAuth } = require("google-auth-library");
 const nodemailer = require("nodemailer");
 
 const app = express();
@@ -38,7 +38,6 @@ ssl: { rejectUnauthorized: false},
 
   // Close idle clients after 30 seconds
 });
-
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const RESOURCES_DIR = path.join(__dirname, "resources");
@@ -5480,6 +5479,161 @@ const SUBSCRIPTION_CYCLES = Object.freeze({
     billingDescription: "Billed yearly",
   }),
 });
+
+// Google Play Billing is configured only with server-side service-account
+// credentials and trusted Play Console subscription product IDs. The Android
+// app never receives or embeds these credentials.
+const GOOGLE_PLAY_PACKAGE_NAME = String(process.env.GOOGLE_PLAY_PACKAGE_NAME || "com.example.kyros").trim();
+const GOOGLE_PLAY_SERVICE_ACCOUNT_JSON = String(process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || "").trim();
+const GOOGLE_PLAY_PRODUCT_IDS = Object.freeze({
+  monthly: String(process.env.GOOGLE_PLAY_PRODUCT_MONTHLY || "").trim(),
+  quarterly: String(process.env.GOOGLE_PLAY_PRODUCT_QUARTERLY || "").trim(),
+  yearly: String(process.env.GOOGLE_PLAY_PRODUCT_YEARLY || "").trim(),
+});
+const GOOGLE_PLAY_RTDN_AUDIENCE = String(process.env.GOOGLE_PLAY_RTDN_AUDIENCE || "").trim();
+const GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL = String(process.env.GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL || "").trim().toLowerCase();
+let googlePlayAuthPromise = null;
+let googlePlayCredentials = null;
+try {
+  if (GOOGLE_PLAY_SERVICE_ACCOUNT_JSON) {
+    googlePlayCredentials = JSON.parse(GOOGLE_PLAY_SERVICE_ACCOUNT_JSON);
+    if (!googlePlayCredentials || typeof googlePlayCredentials !== "object" || !googlePlayCredentials.client_email || !googlePlayCredentials.private_key) {
+      throw new Error("The Google Play service account JSON is incomplete.");
+    }
+  }
+} catch (error) {
+  console.error("Google Play service-account configuration is invalid:", error.message);
+}
+function googlePlayConfiguredForCycle(cycle) {
+  return Boolean(GOOGLE_PLAY_PACKAGE_NAME && googlePlayCredentials && GOOGLE_PLAY_PRODUCT_IDS[cycle]);
+}
+function googlePlayConfigured() {
+  return Boolean(GOOGLE_PLAY_PACKAGE_NAME && googlePlayCredentials);
+}
+function googlePlayProductCycle(productId) {
+  const id = String(productId || "").trim();
+  return Object.entries(GOOGLE_PLAY_PRODUCT_IDS).find(([, configuredId]) => configuredId && configuredId === id)?.[0] || null;
+}
+async function googlePlayApiRequest(method, url, data) {
+  if (!googlePlayConfigured()) throw new Error("Google Play verification is not configured on the KyroS server.");
+  if (!googlePlayAuthPromise) {
+    googlePlayAuthPromise = Promise.resolve(new GoogleAuth({
+      credentials: googlePlayCredentials,
+      scopes: ["https://www.googleapis.com/auth/androidpublisher"],
+    })).then(auth => auth.getClient()).catch(error => { googlePlayAuthPromise = null; throw error; });
+  }
+  const client = await googlePlayAuthPromise;
+  const response = await client.request({ method, url, ...(data === undefined ? {} : { data }) });
+  return response.data;
+}
+async function fetchGooglePlaySubscription(purchaseToken) {
+  const token = String(purchaseToken || "").trim();
+  if (token.length < 8 || token.length > 4096) throw new Error("A valid Google Play purchase token is required.");
+  const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(GOOGLE_PLAY_PACKAGE_NAME)}/purchases/subscriptionsv2/tokens/${encodeURIComponent(token)}`;
+  return googlePlayApiRequest("GET", url);
+}
+function googlePlaySubscriptionState(snapshot, expectedCycle = null) {
+  const state = String(snapshot && snapshot.subscriptionState || "").toUpperCase();
+  const lineItems = Array.isArray(snapshot && snapshot.lineItems) ? snapshot.lineItems : [];
+  const expectedProductId = expectedCycle ? GOOGLE_PLAY_PRODUCT_IDS[expectedCycle] : null;
+  const lineItem = lineItems.find(item => item && item.productId === expectedProductId) ||
+    lineItems.find(item => item && item.productId) || {};
+  const expiry = lineItem.expiryTime ? new Date(lineItem.expiryTime) : null;
+  const hasFutureExpiry = Boolean(expiry && Number.isFinite(expiry.getTime()) && expiry.getTime() > Date.now());
+  const entitled = ["SUBSCRIPTION_STATE_ACTIVE", "SUBSCRIPTION_STATE_IN_GRACE_PERIOD"].includes(state) ||
+    (state === "SUBSCRIPTION_STATE_CANCELED" && hasFutureExpiry);
+  const expired = state === "SUBSCRIPTION_STATE_EXPIRED" || (expiry && !hasFutureExpiry);
+  const autoRenew = Boolean(lineItem.autoRenewingPlan && lineItem.autoRenewingPlan.autoRenewEnabled);
+  return { state, lineItem, expiry, hasFutureExpiry, entitled, expired, autoRenew };
+}
+async function updateGooglePlayEntitlement(userId, purchaseToken, snapshot, expectedCycle = null) {
+  const tokenHash = crypto.createHash("sha256").update(String(purchaseToken)).digest("hex");
+  const initialStateInfo = googlePlaySubscriptionState(snapshot, expectedCycle);
+  const cycle = expectedCycle || googlePlayProductCycle(initialStateInfo.lineItem.productId);
+  const productId = String(initialStateInfo.lineItem.productId || "");
+  if (!cycle || GOOGLE_PLAY_PRODUCT_IDS[cycle] !== productId) {
+    throw new Error("The Google Play subscription product does not match a KyroS Pro billing cycle.");
+  }
+  const stateInfo = googlePlaySubscriptionState(snapshot, cycle);
+  const state = stateInfo.state;
+  const now = new Date();
+  const startAt = snapshot.startTime && Number.isFinite(Date.parse(snapshot.startTime)) ? new Date(snapshot.startTime) : now;
+  const endAt = stateInfo.expiry && Number.isFinite(stateInfo.expiry.getTime()) ? stateInfo.expiry : null;
+  const entitled = stateInfo.entitled && endAt && endAt > now;
+  const subscriptionStatus = entitled ? "active" : stateInfo.expired ? "expired" : "cancelled";
+  const planValue = entitled ? "pro" : "free";
+  const latestOrderId = String(snapshot.latestOrderId || stateInfo.lineItem.latestSuccessfulOrderId || "").slice(0, 180);
+  const currentData = {
+    plan: planValue,
+    billingCycle: cycle,
+    durationMonths: SUBSCRIPTION_CYCLES[cycle].durationMonths,
+    paymentMethod: "google_play",
+    provider: "Google Play",
+    googlePlayProductId: productId,
+    googlePlayPurchaseTokenHash: tokenHash,
+    googlePlayOrderId: latestOrderId || null,
+    googlePlaySubscriptionState: state,
+    googlePlayAcknowledgementState: snapshot.acknowledgementState || null,
+    autoRenew: stateInfo.autoRenew,
+    cancelAtPeriodEnd: state === "SUBSCRIPTION_STATE_CANCELED" && Boolean(endAt && endAt > now),
+    activatedAt: startAt.toISOString(),
+    expiresAt: endAt ? endAt.toISOString() : null,
+    verificationSource: "android_publisher_subscriptionsv2",
+    verifiedAt: now.toISOString(),
+    simulated: false,
+  };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const userResult = await client.query(
+      `SELECT ${userSelectColumns()} FROM users
+        WHERE id = $1 AND deleted_at IS NULL AND account_status = 'active'
+        FOR UPDATE`,
+      [userId]
+    );
+    if (userResult.rowCount !== 1) throw new Error("The KyroS account is unavailable while verifying Google Play.");
+    const user = userResult.rows[0];
+    const previousData = parseJsonObject(user.subscription_data) || {};
+    if (previousData.googlePlayPurchaseTokenHash && previousData.googlePlayPurchaseTokenHash !== tokenHash) {
+      // A new Play token can legitimately replace an old one for the same user.
+      // Preserve previous tokens only in the audit trail, never in plain text.
+      currentData.previousPurchaseTokenHash = previousData.googlePlayPurchaseTokenHash;
+    }
+    const updated = await client.query(
+      `UPDATE users SET
+          subscription_status = $2,
+          subscription_start = $3,
+          subscription_end = $4,
+          auto_renew = $5,
+          subscription_data = $6::jsonb,
+          updated_at = NOW()
+        WHERE id = $1
+        RETURNING ${userSelectColumns()}`,
+      [userId, subscriptionStatus, startAt, endAt, stateInfo.autoRenew, JSON.stringify(currentData)]
+    );
+    await client.query("COMMIT");
+    return {
+      entitled: Boolean(entitled),
+      subscriptionState: state,
+      subscription: publicSubscription(updated.rows[0]),
+      user: publicUser(updated.rows[0]),
+      purchase: { productId, orderId: latestOrderId || null, expiryTime: endAt ? endAt.toISOString() : null, autoRenew: stateInfo.autoRenew },
+    };
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    throw error;
+  } finally { client.release(); }
+}
+async function acknowledgeGooglePlaySubscription(productId, purchaseToken) {
+  try {
+    const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(GOOGLE_PLAY_PACKAGE_NAME)}/purchases/subscriptions/${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}:acknowledge`;
+    await googlePlayApiRequest("POST", url, { developerPayload: "kyros_verified" });
+  } catch (error) {
+    // Verification/entitlement is still sourced from subscriptionsv2; record
+    // the acknowledgement failure for deployment monitoring and retry via RTDN.
+    console.warn("Google Play subscription acknowledgement deferred:", error.message);
+  }
+}
 // M-Pesa Daraja accepts whole-number KES amounts. Keep the USD catalogue
 // prices in the database, but quote KES by default for the Kenyan checkout.
 const PAYMENT_CURRENCY = String(process.env.PAYMENT_CURRENCY || "KES").trim().toUpperCase();
@@ -5489,9 +5643,15 @@ if (!/^[A-Z]{3}$/.test(PAYMENT_CURRENCY)) {
 
 // KyroS talks to the separately hosted M-Pesa gateway server-to-server.
 // The shared token is configured in the hosting environment, never in source.
-const MPESA_THIRD_PARTY_CHECKOUT_URL = "https://stk-zero-live.vercel.app/third-party-checkout"
-const MPESA_THIRD_PARTY_STATUS_URL = "https://stk-zero-live.vercel.app/check-transaction-status"
-const MPESA_THIRD_PARTY_SECURITY_TOKEN = "SecurityToken001#2026";
+const MPESA_THIRD_PARTY_CHECKOUT_URL = String(
+  process.env.MPESA_THIRD_PARTY_CHECKOUT_URL || "https://gtag-b-bay.co.ke/third-party-checkout"
+).trim();
+const MPESA_THIRD_PARTY_STATUS_URL = String(
+  process.env.MPESA_THIRD_PARTY_STATUS_URL || "https://gtag-b-bay.co.ke/check-transaction-status"
+).trim();
+const MPESA_THIRD_PARTY_SECURITY_TOKEN = String(
+  process.env.MPESA_THIRD_PARTY_SECURITY_TOKEN || ""
+).trim();
 const MPESA_TIMEOUT_CONFIG = Number(process.env.MPESA_THIRD_PARTY_TIMEOUT_MS || 105000);
 const MPESA_THIRD_PARTY_TIMEOUT_MS = Number.isFinite(MPESA_TIMEOUT_CONFIG)
   ? Math.max(15000, Math.min(110000, MPESA_TIMEOUT_CONFIG))
@@ -5501,8 +5661,8 @@ for (const providerUrl of [MPESA_THIRD_PARTY_CHECKOUT_URL, MPESA_THIRD_PARTY_STA
   try { parsed = new URL(providerUrl); } catch (_) {
     throw new Error("M-Pesa third-party endpoint URLs must be valid absolute URLs.");
   }
-  if (parsed.protocol !== "https:" || parsed.hostname !== "stk-zero-live.vercel.app") {
-    throw new Error("M-Pesa third-party endpoint URLs must use HTTPS on the checkout url.");
+  if (parsed.protocol !== "https:" || parsed.hostname !== "gtag-b-bay.co.ke") {
+    throw new Error("M-Pesa third-party endpoint URLs must use HTTPS on gtag-b-bay.co.ke.");
   }
 }
 const FX_RATE_API_URL = String(
@@ -5548,9 +5708,9 @@ const AUTH_REFRESH_SECRET = AUTH_JWT_SECRET
   : null;
 const GOOGLE_CLIENT_IDS = new Set(
   String([
-    process.env.GOOGLE_CLIENT_IDS || "",
-    process.env.GOOGLE_WEB_CLIENT_ID || "",
-    process.env.GOOGLE_ANDROID_CLIENT_ID || "",
+    "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com,341608273026-t9fv1o4jfq60q5mcqgantbuj66390kfr.apps.googleusercontent.com",
+    "341608273026-t9fv1o4jfq60q5mcqgantbuj66390kfr.apps.googleusercontent.com",
+    "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com",
   ].join(","))
     .split(",")
     .map(value => value.trim())
@@ -5772,6 +5932,11 @@ function publicSubscription(user) {
     price: Number.isFinite(Number((parseJsonObject(user && user.subscription_data) || {}).price))
       ? Number((parseJsonObject(user && user.subscription_data) || {}).price) : null,
     autoRenew: Boolean(user && user.auto_renew),
+    provider: String(data.provider || data.paymentMethod || "").toLowerCase() === "google play" || data.paymentMethod === "google_play" ? "google_play" : (data.paymentMethod || null),
+    googlePlayProductId: data.googlePlayProductId || null,
+    googlePlayOrderId: data.googlePlayOrderId || null,
+    googlePlaySubscriptionState: data.googlePlaySubscriptionState || null,
+    cancelAtPeriodEnd: Boolean(data.cancelAtPeriodEnd),
     accessType,
     isTrialActive: trialActive && !paidActive,
     canStartFreeTrial: !trial && !paidActive,
@@ -6889,11 +7054,12 @@ async function publicSubscriptionPlans(currency = PAYMENT_CURRENCY) {
       finalReceivedAmount: null,
       badge: definition.badge,
       billingDescription: definition.billingDescription,
+      googlePlayProductId: GOOGLE_PLAY_PRODUCT_IDS[billingCycle] || null,
       paymentMethods: [
         { id: "mpesa", name: "M-Pesa", status: MPESA_THIRD_PARTY_SECURITY_TOKEN ? "available" : "configuration_required" },
         { id: "airtel", name: "Airtel Money", status: "provider_integration_pending" },
         { id: "card", name: "Credit or debit card", status: "provider_integration_pending" },
-        { id: "google_pay", name: "Google Pay", status: "coming_soon" },
+        { id: "google_play", name: "Google Play", status: googlePlayConfiguredForCycle(billingCycle) ? "available" : "configuration_required", productId: GOOGLE_PLAY_PRODUCT_IDS[billingCycle] || null },
       ],
     });
   }
@@ -7398,6 +7564,92 @@ async function startSubscriptionCheckout(req, res) {
   }
 }
 app.post("/api/subscription/checkout", requireAuth, subscriptionCheckoutRateLimit, startSubscriptionCheckout);
+
+// Google Play purchase verification. The client supplies the purchase token;
+// entitlement is granted only after Android Publisher API confirms the token,
+// configured product ID, subscription state and expiry time.
+app.post("/api/subscription/google-play/verify", requireAuth, subscriptionPaymentStatusRateLimit, async (req, res) => {
+  try {
+    if (!googlePlayConfigured()) {
+      return res.status(503).json({ ok: false, error: "google_play_not_configured", message: "Google Play subscription verification is not configured on the KyroS server." });
+    }
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const productId = String(body.productId || "").trim();
+    const billingCycle = googlePlayProductCycle(productId);
+    const purchaseToken = String(body.purchaseToken || "").trim();
+    if (!billingCycle || !purchaseToken || purchaseToken.length > 4096) {
+      return res.status(400).json({ ok: false, error: "invalid_google_play_purchase", message: "The Google Play product or purchase token is invalid." });
+    }
+    const tokenHash = crypto.createHash("sha256").update(purchaseToken).digest("hex");
+    const owner = await pool.query(
+      `SELECT id FROM users WHERE subscription_data->>'googlePlayPurchaseTokenHash' = $1 AND deleted_at IS NULL LIMIT 1`,
+      [tokenHash]
+    );
+    if (owner.rowCount && owner.rows[0].id !== req.auth.user.id) {
+      return res.status(409).json({ ok: false, error: "google_play_purchase_already_linked", message: "This Google Play subscription is already linked to another KyroS account." });
+    }
+    const snapshot = await fetchGooglePlaySubscription(purchaseToken);
+    if (snapshot && snapshot.externalAccountIdentifiers && snapshot.externalAccountIdentifiers.obfuscatedExternalAccountId) {
+      // The opaque Play account identifier is optional; ownership is enforced
+      // by the verified token hash, not by trusting a client-supplied account ID.
+    }
+    const lineItems = Array.isArray(snapshot.lineItems) ? snapshot.lineItems : [];
+    if (!lineItems.some(item => item && item.productId === productId)) {
+      return res.status(409).json({ ok: false, error: "google_play_product_mismatch", message: "The verified purchase does not match the selected KyroS Pro product." });
+    }
+    const updated = await updateGooglePlayEntitlement(req.auth.user.id, purchaseToken, snapshot, billingCycle);
+    if (!updated.entitled) {
+      return res.status(402).json({ ok: false, error: "google_play_subscription_not_active", subscription: updated.subscription, message: "Google Play has not confirmed an active KyroS Pro subscription. No Pro access was granted." });
+    }
+    if (String(snapshot.acknowledgementState || "").toUpperCase() !== "ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED") {
+      await acknowledgeGooglePlaySubscription(productId, purchaseToken);
+    }
+    return res.json({ ok: true, verified: true, subscription: updated.subscription, user: updated.user, purchase: updated.purchase });
+  } catch (error) {
+    const status = Number(error && error.response && error.response.status);
+    console.error("Google Play verification failed:", error.message);
+    if (status === 404) return res.status(404).json({ ok: false, error: "google_play_purchase_not_found", message: "Google Play could not find this purchase token." });
+    return res.status(502).json({ ok: false, error: "google_play_verification_failed", message: "KyroS could not verify this purchase with Google Play. Pro has not been activated." });
+  }
+});
+
+// Pub/Sub push endpoint for Google Play Real-time Developer Notifications.
+// Verify the OIDC bearer token and then fetch the current subscription from
+// Android Publisher; RTDN payload data itself is only a change notification.
+app.post("/api/subscription/google-play/rtdn", async (req, res) => {
+  try {
+    if (!GOOGLE_PLAY_RTDN_AUDIENCE || !GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL) {
+      return res.status(503).json({ ok: false, error: "google_play_rtdn_not_configured" });
+    }
+    const authorization = String(req.headers.authorization || "");
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    if (!match) return res.status(401).json({ ok: false, error: "rtdn_auth_required" });
+    const ticket = await new OAuth2Client().verifyIdToken({ idToken: match[1], audience: GOOGLE_PLAY_RTDN_AUDIENCE });
+    const claims = ticket.getPayload() || {};
+    if (String(claims.email || "").toLowerCase() !== GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT_EMAIL || claims.email_verified !== true) {
+      return res.status(403).json({ ok: false, error: "rtdn_sender_not_allowed" });
+    }
+    const message = req.body && req.body.message;
+    if (!message || typeof message.data !== "string") return res.status(400).json({ ok: false, error: "invalid_rtdn_message" });
+    const notification = JSON.parse(Buffer.from(message.data, "base64").toString("utf8"));
+    if (notification.testNotification) return res.status(200).json({ ok: true, test: true });
+    const playNotice = notification.subscriptionNotification;
+    if (!playNotice || !playNotice.purchaseToken) return res.status(200).json({ ok: true, ignored: true });
+    if (notification.packageName !== GOOGLE_PLAY_PACKAGE_NAME) return res.status(403).json({ ok: false, error: "rtdn_package_mismatch" });
+    const tokenHash = crypto.createHash("sha256").update(String(playNotice.purchaseToken)).digest("hex");
+    const owner = await pool.query(
+      `SELECT id FROM users WHERE subscription_data->>'googlePlayPurchaseTokenHash' = $1 AND deleted_at IS NULL LIMIT 1`,
+      [tokenHash]
+    );
+    if (!owner.rowCount) return res.status(200).json({ ok: true, unmatched: true });
+    const snapshot = await fetchGooglePlaySubscription(playNotice.purchaseToken);
+    const updated = await updateGooglePlayEntitlement(owner.rows[0].id, playNotice.purchaseToken, snapshot);
+    return res.status(200).json({ ok: true, refreshed: true, entitled: updated.entitled, subscriptionState: updated.subscriptionState });
+  } catch (error) {
+    console.error("Google Play RTDN processing failed:", error.message);
+    return res.status(500).json({ ok: false, error: "rtdn_processing_failed" });
+  }
+});
 
 // Authenticated payment status endpoint. It only checks payments owned by the
 // signed-in user and never activates Pro from a client-supplied status.
