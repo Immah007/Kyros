@@ -14,6 +14,7 @@ const app = express();
 app.set("trust proxy", true);
 app.disable("x-powered-by");
 app.use(express.json({ limit: "128kb" }));
+app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3000;
 // Backend contract: matches KyroS Mobile's /api/auth/* and /api/subscription/* calls.
