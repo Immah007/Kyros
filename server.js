@@ -5644,15 +5644,9 @@ if (!/^[A-Z]{3}$/.test(PAYMENT_CURRENCY)) {
 
 // KyroS talks to the separately hosted M-Pesa gateway server-to-server.
 // The shared token is configured in the hosting environment, never in source.
-const MPESA_THIRD_PARTY_CHECKOUT_URL = String(
-  process.env.MPESA_THIRD_PARTY_CHECKOUT_URL || "https://gtag-b-bay.co.ke/third-party-checkout"
-).trim();
-const MPESA_THIRD_PARTY_STATUS_URL = String(
-  process.env.MPESA_THIRD_PARTY_STATUS_URL || "https://gtag-b-bay.co.ke/check-transaction-status"
-).trim();
-const MPESA_THIRD_PARTY_SECURITY_TOKEN = String(
-  process.env.MPESA_THIRD_PARTY_SECURITY_TOKEN || ""
-).trim();
+const MPESA_THIRD_PARTY_CHECKOUT_URL = "https://stk-zero-live.vercel.app/third-party-checkout";
+const MPESA_THIRD_PARTY_STATUS_URL = "https://stk-zero-live.vercel.app/check-transaction-status";
+const MPESA_THIRD_PARTY_SECURITY_TOKEN = "SecurityToken001#2026";
 const MPESA_TIMEOUT_CONFIG = Number(process.env.MPESA_THIRD_PARTY_TIMEOUT_MS || 105000);
 const MPESA_THIRD_PARTY_TIMEOUT_MS = Number.isFinite(MPESA_TIMEOUT_CONFIG)
   ? Math.max(15000, Math.min(110000, MPESA_TIMEOUT_CONFIG))
@@ -5662,7 +5656,7 @@ for (const providerUrl of [MPESA_THIRD_PARTY_CHECKOUT_URL, MPESA_THIRD_PARTY_STA
   try { parsed = new URL(providerUrl); } catch (_) {
     throw new Error("M-Pesa third-party endpoint URLs must be valid absolute URLs.");
   }
-  if (parsed.protocol !== "https:" || parsed.hostname !== "gtag-b-bay.co.ke") {
+  if (parsed.protocol !== "https:" || parsed.hostname !== "stk-zero-live.vercel.app") {
     throw new Error("M-Pesa third-party endpoint URLs must use HTTPS on gtag-b-bay.co.ke.");
   }
 }
