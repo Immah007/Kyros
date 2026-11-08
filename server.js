@@ -5703,8 +5703,8 @@ const AUTH_REFRESH_SECRET = AUTH_JWT_SECRET
   : null;
 const GOOGLE_CLIENT_IDS = new Set(
   String([
-    "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com,341608273026-t9fv1o4jfq60q5mcqgantbuj66390kfr.apps.googleusercontent.com",
-    "341608273026-t9fv1o4jfq60q5mcqgantbuj66390kfr.apps.googleusercontent.com",
+    "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com,341608273026-rih2a2ngv700gm25ec9sbun33l8tkiuf.apps.googleusercontent.com",
+    "341608273026-rih2a2ngv700gm25ec9sbun33l8tkiuf.apps.googleusercontent.com",
     "341608273026-7uqukf6ek3snji1rmti2sjuct2dagdgp.apps.googleusercontent.com",
   ].join(","))
     .split(",")
